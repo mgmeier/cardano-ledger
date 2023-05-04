@@ -37,6 +37,7 @@ import Cardano.Ledger.Babbage.TxBody (BabbageTxOut (..))
 import Cardano.Ledger.BaseTypes (BlocksMade (..), Network (..), ProtVer (..), SlotNo (..), TxIx (..), txIxToInt)
 import qualified Cardano.Ledger.CertState as DP
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
+import Cardano.Ledger.Conway.Delegation (ConwayDCert (..), ConwayDelegCert (..), Delegatee (..))
 import Cardano.Ledger.Conway.Governance (ConwayTallyState (..))
 import Cardano.Ledger.Conway.Rules (ConwayNewEpochPredFailure)
 import qualified Cardano.Ledger.Conway.Rules as Conway
@@ -1410,7 +1411,30 @@ pcConwayTxCert (ConwayTxCertDeleg dc) = prettyA dc
 pcConwayTxCert (ConwayTxCertPool poolc) = pcPoolCert poolc
 pcConwayTxCert (ConwayTxCertCommittee _) = ppString "ConwayTxCertCommittee" -- TODO: @aniketd add pretty instance for the certs
 
-instance c ~ EraCrypto era => PrettyC (ShelleyTxCert c) era where prettyC _ = pcShelleyTxCert
+pcConwayDelegCert :: ConwayDelegCert c -> PDoc
+pcConwayDelegCert (ConwayRegCert cred mcoin) =
+  ppSexp "RegCert" [pcCredential cred, ppStrictMaybe pcCoin mcoin]
+pcConwayDelegCert (ConwayUnRegCert cred mcoin) =
+  ppSexp "UnRegCert" [pcCredential cred, ppStrictMaybe pcCoin mcoin]
+pcConwayDelegCert (ConwayDelegCert cred d) =
+  ppSexp "DelegCert" [pcCredential cred, pcDelegatee d]
+pcConwayDelegCert (ConwayRegDelegCert cred d c) =
+  ppSexp "RegDelegCert" [pcCredential cred, pcDelegatee d, pcCoin c]
+
+pcDelegatee :: Delegatee c -> PDoc
+pcDelegatee (DelegStake kh) = ppSexp "DelegStake" [pcKeyHash kh]
+pcDelegatee (DelegVote cred) = ppSexp "DelegVote" [pcCredential cred]
+pcDelegatee (DelegStakeVote kh cred) = ppSexp "DelegStakeVote" [pcKeyHash kh, pcCredential cred]
+
+pcDCert :: Proof era -> DCert era -> PDoc
+pcDCert (Shelley _) x = pcShelleyDCert x
+pcDCert (Allegra _) x = pcShelleyDCert x
+pcDCert (Mary _) x = pcShelleyDCert x
+pcDCert (Alonzo _) x = pcShelleyDCert x
+pcDCert (Babbage _) x = pcShelleyDCert x
+pcDCert (Conway _) x = pcConwayDCert x
+
+instance c ~ EraCrypto era => PrettyC (ShelleyDCert c) era where prettyC _ = pcShelleyDCert
 
 pcRewardAcnt :: RewardAcnt c -> PDoc
 pcRewardAcnt (RewardAcnt net cred) = ppSexp "RewAccnt" [pcNetwork net, pcCredential cred]
@@ -1422,9 +1446,7 @@ pcExUnits (ExUnits mem step) =
   ppSexp "ExUnits" [ppNatural mem, ppNatural step]
 
 pcTxBodyField ::
-  ( Reflect era
-  , PrettyA (TxCert era)
-  ) =>
+  Reflect era =>
   Proof era ->
   TxBodyField era ->
   [(Text, PDoc)]
@@ -1437,7 +1459,7 @@ pcTxBodyField proof x = case x of
   CollateralReturn (SJust txout) -> [("coll return", pcTxOut proof txout)]
   TotalCol SNothing -> []
   TotalCol (SJust c) -> [("total coll", pcCoin c)]
-  Certs xs -> [("certs", ppList prettyA (toList xs))]
+  Certs xs -> [("certs", ppList (pcDCert proof) (toList xs))]
   Withdrawals' (Withdrawals m) -> [("withdrawal", ppMap pcRewardAcnt pcCoin m)]
   Txfee c -> [("fee", pcCoin c)]
   Vldt v -> [("validity interval", ppValidityInterval v)]
@@ -1456,9 +1478,7 @@ pcTxBodyField proof x = case x of
 
 pcTxField ::
   forall era.
-  ( Reflect era
-  , PrettyA (TxCert era)
-  ) =>
+  Reflect era =>
   Proof era ->
   TxField era ->
   [(Text, PDoc)]
@@ -1496,14 +1516,14 @@ pcWitnesses proof wits = ppRecord "Witnesses" pairs
     fields = abstractWitnesses proof wits
     pairs = concat (map (pcWitnessesField proof) fields)
 
-pcTx :: (Reflect era, PrettyA (TxCert era)) => Proof era -> Tx era -> PDoc
+pcTx :: Reflect era => Proof era -> Tx era -> PDoc
 pcTx proof tx = ppRecord "Tx" pairs
   where
     fields = abstractTx proof tx
     pairs = concatMap (pcTxField proof) fields
 
-pcTxBody :: (Reflect era, PrettyA (TxCert era)) => Proof era -> TxBody era -> PDoc
-pcTxBody proof txbody = ppRecord "TxBody" pairs
+pcTxBody :: Reflect era => Proof era -> TxBody era -> PDoc
+pcTxBody proof txbody = ppRecord ("TxBody " <> pack (show proof)) pairs
   where
     fields = abstractTxBody proof txbody
     pairs = concatMap (pcTxBodyField proof) fields
@@ -1558,7 +1578,7 @@ instance PrettyC (PState era) era where
   prettyC _ x = pcPState x
 
 instance PrettyC (VState era) era where
-  prettyC _ st = prettyA st
+  prettyC _ st = pcVState st
 
 instance PrettyC (CertState era) era where
   prettyC proof (CertState vst pst dst) =
@@ -1568,6 +1588,14 @@ instance PrettyC (CertState era) era where
       , ("vstate", prettyC proof vst)
       , ("dstate", pcDState dst)
       ]
+
+pcVState :: VState era -> PDoc
+pcVState (VState dreps hotkeys) =
+  ppRecord
+    "VState"
+    [ ("dReps", ppSet pcCredential dreps)
+    , ("hotKeys", ppMap pcKeyHash pcKeyHash hotkeys)
+    ]
 
 instance Reflect era => PrettyC (LedgerState era) era where prettyC = pcLedgerState
 
@@ -1692,10 +1720,10 @@ pcDState :: DState c -> PDoc
 pcDState ds =
   ppRecord
     "DState"
-    [ ("rewards", ppMap pcCredential pcCoin (rewardMap (dsUnified ds)))
-    , ("deposits", ppMap pcCredential pcCoin (depositMap (dsUnified ds)))
-    , ("delegate", ppMap pcCredential pcKeyHash (sPoolMap (dsUnified ds)))
-    , ("ptrs", ppMap ppPtr ppCredential (ptrMap (dsUnified ds)))
+    [ ("rewards", ppMap pcCredential pcCoin (rewView (dsUnified ds)))
+    , ("deposits", ppMap pcCredential pcCoin (depositView (dsUnified ds)))
+    , ("delegate", ppMap pcCredential pcKeyHash (delView (dsUnified ds)))
+    , ("ptrs", ppMap ppPtr pcCredential (ptrView (dsUnified ds)))
     , ("fGenDel", ppMap pcFutureGenDeleg pcGenDelegPair (dsFutureGenDelegs ds))
     , ("GenDel", ppMap pcKeyHash pcGenDelegPair (unGenDelegs (dsGenDelegs ds)))
     , ("iRewards", pcIRewards (dsIRewards ds))
