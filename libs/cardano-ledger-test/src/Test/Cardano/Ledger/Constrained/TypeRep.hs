@@ -55,13 +55,14 @@ import Cardano.Ledger.Keys (GenDelegPair (..), KeyHash, KeyRole (..))
 import Cardano.Ledger.Mary.Value (AssetName (..), MultiAsset (..), PolicyID (..))
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import Cardano.Ledger.PoolParams (PoolParams (ppId))
-import Cardano.Ledger.Pretty (ppInteger, ppRecord', ppString)
+import Cardano.Ledger.Pretty (PDoc, ppInteger, ppRecord', ppString)
 import Cardano.Ledger.Pretty.Alonzo (ppRdmrPtr)
 import Cardano.Ledger.Pretty.Mary (ppValidityInterval)
 
--- import Cardano.Ledger.Shelley.Delegation(DCert)
+import Cardano.Ledger.Conway.TxCert (ConwayTxCert (..))
 import Cardano.Ledger.Shelley.LedgerState
 import Cardano.Ledger.Shelley.Rewards (Reward (..))
+import Cardano.Ledger.Shelley.TxCert (MIRPot (..), ShelleyTxCert (..))
 import Cardano.Ledger.TxIn (TxIn)
 import Cardano.Ledger.UTxO (UTxO (..))
 import Cardano.Ledger.Val (Val ((<+>)))
@@ -79,10 +80,10 @@ import Prettyprinter (hsep)
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import Test.Cardano.Ledger.Constrained.Classes (
-  DCertF (..),
   PParamsF (..),
   PParamsUpdateF (..),
   ScriptF (..),
+  TxCertF (..),
   TxOutF (..),
   ValueF (..),
   genPParams,
@@ -108,7 +109,7 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   keyHashSummary,
   pcAddr,
   pcCoin,
-  pcDCert,
+  pcConwayTxCert,
   pcData,
   pcDataHash,
   pcDatum,
@@ -120,7 +121,11 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcReward,
   pcRewardAcnt,
   pcScriptHash,
+  pcShelleyTxCert,
+  pcTxCert,
   pcTxIn,
+  pcTxOut,
+  pcVal,
   pcWitnessesField,
  )
 import Test.Cardano.Ledger.Generic.Proof (Evidence (..), Proof (..), unReflect)
@@ -182,7 +187,7 @@ data Rep era t where
   PolicyIDR :: Rep era (PolicyID (EraCrypto era))
   WitnessesFieldR :: Proof era -> Rep era (WitnessesField era)
   AssetNameR :: Rep era AssetName
-  DCertR :: Proof era -> Rep era (DCertF era)
+  TxCertR :: Proof era -> Rep era (TxCertF era)
   RewardAcntR :: Rep era (RewardAcnt (EraCrypto era))
   ValidityIntervalR :: Rep era ValidityInterval
   KeyPairR :: Rep era (KeyPair 'Witness (EraCrypto era))
@@ -198,6 +203,9 @@ data Rep era t where
   DataHashR :: Rep era (DataHash (EraCrypto era))
   AddrR :: Rep era (Addr (EraCrypto era))
   PCredR :: Rep era (Credential 'Payment (EraCrypto era))
+  ShelleyTxCertR :: Rep era (ShelleyTxCert era)
+  ConwayTxCertR :: Rep era (ConwayTxCert era)
+  MIRPotR :: Rep era MIRPot
 
 stringR :: Rep era String
 stringR = ListR CharR
@@ -273,7 +281,7 @@ instance Singleton (Rep e) where
   testEql MultiAssetR MultiAssetR = pure Refl
   testEql PolicyIDR PolicyIDR = pure Refl
   testEql AssetNameR AssetNameR = pure Refl
-  testEql (DCertR c) (DCertR d) = do Refl <- testEql c d; pure Refl
+  testEql (TxCertR c) (TxCertR d) = do Refl <- testEql c d; pure Refl
   testEql ValidityIntervalR ValidityIntervalR = Just Refl
   testEql RewardAcntR RewardAcntR = Just Refl
   testEql KeyPairR KeyPairR = Just Refl
@@ -290,6 +298,9 @@ instance Singleton (Rep e) where
   testEql DataHashR DataHashR = Just Refl
   testEql AddrR AddrR = Just Refl
   testEql PCredR PCredR = Just Refl
+  testEql ConwayTxCertR ConwayTxCertR = Just Refl
+  testEql ShelleyTxCertR ShelleyTxCertR = Just Refl
+  testEql MIRPotR MIRPotR = Just Refl
   testEql _ _ = Nothing
   cmpIndex x y = compare (shape x) (shape y)
 
@@ -336,20 +347,15 @@ instance Show (Rep era t) where
   show (ProtVerR x) = "(ProtVer " ++ short x ++ ")"
   show SlotNoR = "(SlotNo c)"
   show SizeR = "Size"
-<<<<<<< HEAD
-  show VCredR = "VCredR"
-  show VHashR = "VHashR"
   show CommColdHashR = "CommColdHash"
   show CommHotHashR = "CommHotHash"
-=======
   show VCredR = "(Credential 'Voting c)"
   show VHashR = "(KeyHash 'Voting c)"
->>>>>>> 460b6046d (Cleanup Fields (removed Access, inlined Yes))
   show MultiAssetR = "(MutiAsset c)"
   show PolicyIDR = "(PolicyID c)"
   show (WitnessesFieldR p) = "(WitnessesField " ++ short p ++ ")"
   show AssetNameR = "AssetName"
-  show (DCertR p) = "(DCert " ++ short p ++ ")"
+  show (TxCertR p) = "(TxCert " ++ short p ++ ")"
   show RewardAcntR = "(RewardAcnt c)"
   show ValidityIntervalR = "ValidityInterval"
   show KeyPairR = "(KeyPair 'Witness era)"
@@ -365,6 +371,9 @@ instance Show (Rep era t) where
   show DataHashR = "(DataHash c)"
   show AddrR = "(Addr c)"
   show PCredR = "(Credential 'Payment c)"
+  show ConwayTxCertR = "(ConwayTxCert era)"
+  show ShelleyTxCertR = "(ShelleyTxCert era)"
+  show MIRPotR = "MIRPot"
 
 synopsis :: forall e t. Rep e t -> t -> String
 synopsis RationalR r = show r
@@ -396,8 +405,8 @@ synopsis NaturalR n = show n
 synopsis FloatR n = show n
 synopsis TxInR txin = show (pcTxIn txin)
 synopsis CharR s = show s
-synopsis (ValueR _) x = show x
-synopsis (TxOutR _) x = show x
+synopsis (ValueR p) (ValueF _ x) = show (pcVal p x)
+synopsis (TxOutR p) (TxOutF _ x) = show ((unReflect pcTxOut p x) :: PDoc)
 synopsis (UTxOR p) (UTxO mp) = "UTxO( " ++ synopsis (MapR TxInR (TxOutR p)) (Map.map (TxOutF p) mp) ++ " )"
 synopsis (PParamsR _) (PParamsF p x) = show $ pcPParamsSynopsis p x
 synopsis (PParamsUpdateR _) _ = "PParamsUpdate ..."
@@ -427,7 +436,7 @@ synopsis MultiAssetR (MultiAsset x) = "(MultiAsset num tokens = " ++ show (Map.s
 synopsis PolicyIDR (PolicyID x) = show (pcScriptHash x)
 synopsis (WitnessesFieldR p) x = show $ ppRecord' mempty $ unReflect pcWitnessesField p x
 synopsis AssetNameR (AssetName x) = take 10 (show x)
-synopsis (DCertR p) (DCertF _ x) = show (pcDCert p x)
+synopsis (TxCertR p) (TxCertF _ x) = show (pcTxCert p x)
 synopsis RewardAcntR x = show (pcRewardAcnt x)
 synopsis ValidityIntervalR x = show (ppValidityInterval x)
 synopsis KeyPairR _ = "(KeyPairR ...)"
@@ -443,6 +452,9 @@ synopsis TagR x = show x
 synopsis DataHashR x = show (pcDataHash x)
 synopsis AddrR x = show (pcAddr x)
 synopsis PCredR c = show (credSummary c)
+synopsis ConwayTxCertR x = show (pcConwayTxCert x)
+synopsis ShelleyTxCertR x = show (pcShelleyTxCert x)
+synopsis MIRPotR x = show x
 
 
 synSum :: Rep era a -> a -> String
@@ -514,7 +526,6 @@ instance Shaped (Rep era) any where
   shape (PairR a b) = Nary 38 [shape a, shape b]
   shape VCredR = Nullary 39
   shape VHashR = Nullary 40
-<<<<<<< HEAD
   shape CommColdHashR = Nullary 41
   shape CommHotHashR = Nullary 42
   shape MultiAssetR = Nullary 43
@@ -524,11 +535,12 @@ instance Shaped (Rep era) any where
   shape DCertR = Nullary 47
   shape RewardAcntR = Nullary 48
   shape ValidityIntervalR = Nullary 49
+ 
   shape MultiAssetR = Nullary 50
   shape PolicyIDR = Nullary 51
   shape (WitnessesFieldR p) = Nary 52 [shape p]
   shape AssetNameR = Nullary 53
-  shape DCertR = Nullary 54
+  shape (TxCertR p) = Nary 54 [shape p]
   shape RewardAcntR = Nullary 55
   shape ValidityIntervalR = Nullary 56
   shape KeyPairR = Nullary 57
@@ -537,34 +549,17 @@ instance Shaped (Rep era) any where
   shape ScriptHashR = Nullary 60
   shape NetworkR = Nullary 61
   shape RdmrPtrR = Nullary 62
-  shape (DataR p) = Nary 63 [shape p]
-  shape ExUnitsR = Nullary 64
-  shape TagR = Nullary 65
+  shape DataR = Nullary 63
+  shape DatumR = Nullary 64
+  shape ExUnitsR = Nullary 65
+  shape TagR = Nullary 66
   shape DataHashR = Nullary 67
   shape AddrR = Nullary 68
   shape PCredR = Nullary 69
-=======
-  shape MultiAssetR = Nullary 41
-  shape PolicyIDR = Nullary 42
-  shape (WitnessesFieldR p) = Nary 43 [shape p]
-  shape AssetNameR = Nullary 44
-  shape (DCertR p) = Nary 45 [shape p]
-  shape RewardAcntR = Nullary 46
-  shape ValidityIntervalR = Nullary 47
-  shape KeyPairR = Nullary 48
-  shape (GenR x) = Nary 49 [shape x]
-  shape (ScriptR p) = Nary 50 [shape p]
-  shape ScriptHashR = Nullary 51
-  shape NetworkR = Nullary 52
-  shape RdmrPtrR = Nullary 53
-  shape DataR = Nullary 54
-  shape DatumR = Nullary 55
-  shape ExUnitsR = Nullary 56
-  shape TagR = Nullary 57
-  shape DataHashR = Nullary 58
-  shape AddrR = Nullary 59
-  shape PCredR = Nullary 60
->>>>>>> 460b6046d (Cleanup Fields (removed Access, inlined Yes))
+  shape ConwayTxCertR = Nullary 70
+  shape ShelleyTxCertR = Nullary 71
+  shape MIRPotR = Nullary 72
+
 
 compareRep :: forall era t s. Rep era t -> Rep era s -> Ordering
 compareRep x y = cmpIndex @(Rep era) x y
@@ -628,12 +623,12 @@ genSizedRep _ PolicyIDR = arbitrary
 genSizedRep _ (WitnessesFieldR _) = pure $ AddrWits Set.empty
 genSizedRep _ AssetNameR = arbitrary
 genSizedRep _ RewardAcntR = arbitrary
-genSizedRep _ (DCertR (Shelley c)) = DCertF (Shelley c) <$> arbitrary
-genSizedRep _ (DCertR (Allegra c)) = DCertF (Allegra c) <$> arbitrary
-genSizedRep _ (DCertR (Mary c)) = DCertF (Mary c) <$> arbitrary
-genSizedRep _ (DCertR (Alonzo c)) = DCertF (Alonzo c) <$> arbitrary
-genSizedRep _ (DCertR (Babbage c)) = DCertF (Babbage c) <$> arbitrary
-genSizedRep _ (DCertR (Conway c)) = DCertF (Conway c) <$> arbitrary
+genSizedRep _ (TxCertR (Shelley c)) = TxCertF (Shelley c) <$> arbitrary
+genSizedRep _ (TxCertR (Allegra c)) = TxCertF (Allegra c) <$> arbitrary
+genSizedRep _ (TxCertR (Mary c)) = TxCertF (Mary c) <$> arbitrary
+genSizedRep _ (TxCertR (Alonzo c)) = TxCertF (Alonzo c) <$> arbitrary
+genSizedRep _ (TxCertR (Babbage c)) = TxCertF (Babbage c) <$> arbitrary
+genSizedRep _ (TxCertR (Conway c)) = TxCertF (Conway c) <$> arbitrary
 genSizedRep _ ValidityIntervalR = arbitrary
 genSizedRep _ KeyPairR = arbitrary
 genSizedRep n (GenR x) = pure (genSizedRep n x)
@@ -653,6 +648,9 @@ genSizedRep _ TagR = arbitrary
 genSizedRep _ DataHashR = arbitrary
 genSizedRep _ AddrR = arbitrary
 genSizedRep _ PCredR = arbitrary
+genSizedRep _ ShelleyTxCertR = arbitrary
+genSizedRep _ ConwayTxCertR = arbitrary
+genSizedRep _ MIRPotR = arbitrary
 
 genRep ::
   Era era =>
@@ -727,12 +725,12 @@ shrinkRep MultiAssetR t = shrink t
 shrinkRep PolicyIDR t = shrink t
 shrinkRep (WitnessesFieldR _) _ = []
 shrinkRep AssetNameR t = shrink t
-shrinkRep (DCertR (Shelley _)) (DCertF p x) = map (DCertF p) (shrink x)
-shrinkRep (DCertR (Allegra _)) (DCertF p x) = map (DCertF p) (shrink x)
-shrinkRep (DCertR (Mary _)) (DCertF p x) = map (DCertF p) (shrink x)
-shrinkRep (DCertR (Alonzo _)) (DCertF p x) = map (DCertF p) (shrink x)
-shrinkRep (DCertR (Babbage _)) (DCertF p x) = map (DCertF p) (shrink x)
-shrinkRep (DCertR (Conway _)) (DCertF p x) = map (DCertF p) (shrink x)
+shrinkRep (TxCertR (Shelley _)) (TxCertF p x) = map (TxCertF p) (shrink x)
+shrinkRep (TxCertR (Allegra _)) (TxCertF p x) = map (TxCertF p) (shrink x)
+shrinkRep (TxCertR (Mary _)) (TxCertF p x) = map (TxCertF p) (shrink x)
+shrinkRep (TxCertR (Alonzo _)) (TxCertF p x) = map (TxCertF p) (shrink x)
+shrinkRep (TxCertR (Babbage _)) (TxCertF p x) = map (TxCertF p) (shrink x)
+shrinkRep (TxCertR (Conway _)) (TxCertF p x) = map (TxCertF p) (shrink x)
 shrinkRep RewardAcntR t = shrink t
 shrinkRep ValidityIntervalR _ = []
 shrinkRep KeyPairR t = shrink t
@@ -750,6 +748,9 @@ shrinkRep TagR t = shrink t
 shrinkRep DataHashR t = shrink t
 shrinkRep AddrR t = shrink t
 shrinkRep PCredR t = shrink t
+shrinkRep ShelleyTxCertR t = shrink t
+shrinkRep ConwayTxCertR t = shrink t
+shrinkRep MIRPotR t = shrink t
 
 -- ===========================
 
@@ -839,7 +840,7 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help PolicyIDR v = pure $ With v
     help (WitnessesFieldR _) _ = failT ["WitnessesField does not have Ord instance"]
     help AssetNameR v = pure $ With v
-    help (DCertR _) _ = failT ["DCert does not have Ord instance"]
+    help (TxCertR _) _ = failT ["TxCert does not have Ord instance"]
     help RewardAcntR v = pure $ With v
     help ValidityIntervalR v = pure $ With v
     help KeyPairR _ = failT ["KeyPair does not have Ord instance"]
@@ -855,6 +856,9 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help DataHashR v = pure $ With v
     help AddrR v = pure $ With v
     help PCredR v = pure $ With v
+    help ConwayTxCertR _ = failT ["ConwayTxCert does not have Ord instance"]
+    help ShelleyTxCertR _ = failT ["ShelleyTxCert does not have Ord instance"]
+    help MIRPotR v = pure $ With v
 
 hasEq :: Rep era t -> s t -> Typed (HasConstraint Eq (s t))
 hasEq rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)

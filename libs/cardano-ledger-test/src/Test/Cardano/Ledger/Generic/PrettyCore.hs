@@ -32,16 +32,16 @@ import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), binaryDataToDa
 import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptPurpose (..))
 import Cardano.Ledger.Alonzo.TxBody (AlonzoTxOut (..))
 import Cardano.Ledger.Alonzo.TxWits (Redeemers (..), TxDats (..), unTxDats)
+import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..))
 import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..))
 import Cardano.Ledger.Babbage.TxBody (BabbageTxOut (..))
 import Cardano.Ledger.BaseTypes (BlocksMade (..), Network (..), ProtVer (..), SlotNo (..), TxIx (..), txIxToInt)
 import qualified Cardano.Ledger.CertState as DP
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
-import Cardano.Ledger.Conway.Delegation (ConwayDCert (..), ConwayDelegCert (..), Delegatee (..))
 import Cardano.Ledger.Conway.Governance (ConwayTallyState (..))
 import Cardano.Ledger.Conway.Rules (ConwayNewEpochPredFailure)
 import qualified Cardano.Ledger.Conway.Rules as Conway
-import Cardano.Ledger.Conway.TxCert (ConwayTxCert (..))
+import Cardano.Ledger.Conway.TxCert (ConwayDelegCert (..), ConwayTxCert (..), Delegatee (..))
 import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Credential (Credential (KeyHashObj, ScriptHashObj), StakeReference (..))
@@ -56,7 +56,7 @@ import Cardano.Ledger.Keys (
   VKey (..),
   hashKey,
  )
-import Cardano.Ledger.Mary.Value (MaryValue (..), MultiAsset (..))
+import Cardano.Ledger.Mary.Value (AssetName (..), MaryValue (..), MultiAsset (..), PolicyID (..), flattenMultiAsset)
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..), PoolDistr (..))
 import Cardano.Ledger.Pretty
 import Cardano.Ledger.Pretty.Alonzo
@@ -104,7 +104,8 @@ import Cardano.Ledger.Shelley.TxBody (
   ShelleyTxOut (..),
   WitVKey (..),
  )
-import Cardano.Ledger.Shelley.TxCert (ShelleyDelegCert (..), ShelleyTxCert (..))
+import Cardano.Ledger.Shelley.TxCert (MIRCert (..), MIRTarget (..), ShelleyDelegCert (..), ShelleyTxCert (..))
+import Cardano.Ledger.Shelley.UTxO (ShelleyScriptsNeeded (..))
 import Cardano.Ledger.TxIn (TxId (..), TxIn (..))
 import Cardano.Ledger.UMap (
   depositMap,
@@ -114,7 +115,8 @@ import Cardano.Ledger.UMap (
   sPoolMap,
  )
 import qualified Cardano.Ledger.UMap as UM (UMap, UView (..), size)
-import Cardano.Ledger.UTxO (UTxO (..))
+import qualified Cardano.Ledger.UMap as UM (UMap, View (..), size)
+import Cardano.Ledger.UTxO (ScriptsNeeded, UTxO (..))
 import qualified Cardano.Ledger.Val as Val
 import Control.State.Transition.Extended (STS (..))
 import Data.Foldable (toList)
@@ -747,9 +749,6 @@ ppScriptPurpose (Spending txin) = ppSexp "Spending" [ppTxIn txin]
 ppScriptPurpose (Rewarding acct) = ppSexp "Rewarding" [ppRewardAcnt' acct]
 ppScriptPurpose (Certifying dcert) = ppSexp "Certifying" [prettyA dcert]
 
-instance PrettyA (TxCert era) => PrettyA (ScriptPurpose era) where
-  prettyA = ppScriptPurpose
-
 instance PrettyA x => PrettyA [x] where prettyA xs = ppList prettyA xs
 
 -- =====================================================
@@ -1243,8 +1242,8 @@ pcKeyHash (KeyHash h) = trim (ppHash h)
 instance c ~ EraCrypto era => PrettyC (KeyHash d c) era where prettyC _ = pcKeyHash
 
 pcCredential :: Credential keyrole c -> PDoc
-pcCredential (ScriptHashObj (ScriptHash h)) = hsep [ppString "Script", trim (ppHash h)]
-pcCredential (KeyHashObj (KeyHash h)) = hsep [ppString "Key", trim (ppHash h)]
+pcCredential (ScriptHashObj (ScriptHash h)) = hsep [ppString "(Script", trim (ppHash h) <> ppString ")"]
+pcCredential (KeyHashObj (KeyHash h)) = hsep [ppString "(Key", trim (ppHash h) <> ppString ")"]
 
 instance c ~ EraCrypto era => PrettyC (Credential keyrole c) era where prettyC _ = pcCredential
 
@@ -1405,6 +1404,19 @@ pcShelleyTxCert (ShelleyTxCertDelegCert x) = pcDelegCert x
 pcShelleyTxCert (ShelleyTxCertPool x) = pcPoolCert x
 pcShelleyTxCert (ShelleyTxCertGenesisDeleg _) = ppString "GenesisCert"
 pcShelleyTxCert (ShelleyTxCertMir _) = ppString "MirCert"
+pcShelleyTxCert (ShelleyTxCertGenesis _) = ppString "GenesisCert"
+pcShelleyTxCert (ShelleyTxCertMir (MIRCert x (StakeAddressesMIR m))) =
+  ppRecord
+    "MIRStakeAdresses"
+    [ ("pot", ppString (show x))
+    , ("Addresses", ppMap pcCredential pcDeltaCoin m)
+    ]
+pcShelleyTxCert (ShelleyTxCertMir (MIRCert x (SendToOppositePotMIR c))) =
+  ppRecord
+    "MIROppositePot"
+    [ ("pot", ppString (show x))
+    , ("Addresses", pcCoin c)
+    ]
 
 pcConwayTxCert :: ConwayTxCert c -> PDoc
 pcConwayTxCert (ConwayTxCertDeleg dc) = prettyA dc
@@ -1426,15 +1438,15 @@ pcDelegatee (DelegStake kh) = ppSexp "DelegStake" [pcKeyHash kh]
 pcDelegatee (DelegVote cred) = ppSexp "DelegVote" [pcCredential cred]
 pcDelegatee (DelegStakeVote kh cred) = ppSexp "DelegStakeVote" [pcKeyHash kh, pcCredential cred]
 
-pcDCert :: Proof era -> DCert era -> PDoc
-pcDCert (Shelley _) x = pcShelleyDCert x
-pcDCert (Allegra _) x = pcShelleyDCert x
-pcDCert (Mary _) x = pcShelleyDCert x
-pcDCert (Alonzo _) x = pcShelleyDCert x
-pcDCert (Babbage _) x = pcShelleyDCert x
-pcDCert (Conway _) x = pcConwayDCert x
+pcTxCert :: Proof era -> TxCert era -> PDoc
+pcTxCert (Shelley _) x = pcShelleyTxCert x
+pcTxCert (Allegra _) x = pcShelleyTxCert x
+pcTxCert (Mary _) x = pcShelleyTxCert x
+pcTxCert (Alonzo _) x = pcShelleyTxCert x
+pcTxCert (Babbage _) x = pcShelleyTxCert x
+pcTxCert (Conway _) x = pcConwayTxCert x
 
-instance c ~ EraCrypto era => PrettyC (ShelleyDCert c) era where prettyC _ = pcShelleyDCert
+instance c ~ EraCrypto era => PrettyC (ShelleyTxCert c) era where prettyC _ = pcShelleyTxCert
 
 pcRewardAcnt :: RewardAcnt c -> PDoc
 pcRewardAcnt (RewardAcnt net cred) = ppSexp "RewAccnt" [pcNetwork net, pcCredential cred]
@@ -1459,7 +1471,7 @@ pcTxBodyField proof x = case x of
   CollateralReturn (SJust txout) -> [("coll return", pcTxOut proof txout)]
   TotalCol SNothing -> []
   TotalCol (SJust c) -> [("total coll", pcCoin c)]
-  Certs xs -> [("certs", ppList (pcDCert proof) (toList xs))]
+  Certs xs -> [("certs", ppList (pcTxCert proof) (toList xs))]
   Withdrawals' (Withdrawals m) -> [("withdrawal", ppMap pcRewardAcnt pcCoin m)]
   Txfee c -> [("fee", pcCoin c)]
   Vldt v -> [("validity interval", ppValidityInterval v)]
@@ -1766,3 +1778,36 @@ pcAdaPot es =
         , ("fees", pcCoin (feesAdaPot x))
         , ("totalAda", pcCoin (totalAdaES es))
         ]
+
+-- ========================
+
+pcPolicyID :: PolicyID c -> PDoc
+pcPolicyID (PolicyID sh) = pcScriptHash sh
+
+pcAssetName :: AssetName -> PDoc
+pcAssetName x = trim (viaShow x)
+
+pcMultiAsset :: MultiAsset c -> PDoc
+pcMultiAsset m = ppList pptriple (flattenMultiAsset m)
+  where
+    pptriple (i, asset, num) = hsep [pcPolicyID i, pcAssetName asset, ppInteger num]
+
+pcScriptPurpose :: Proof era -> ScriptPurpose era -> PDoc
+pcScriptPurpose _ (Minting policy) = ppSexp "Minting" [pcPolicyID policy]
+pcScriptPurpose _ (Spending txin) = ppSexp "Spending" [pcTxIn txin]
+pcScriptPurpose _ (Rewarding acct) = ppSexp "Rewarding" [pcRewardAcnt acct]
+pcScriptPurpose p (Certifying dcert) = ppSexp "Certifying" [pcTxCert p dcert]
+
+instance PrettyC (ScriptPurpose era) era where
+  prettyC = pcScriptPurpose
+
+pcScriptsNeeded :: Proof era -> ScriptsNeeded era -> PDoc
+pcScriptsNeeded (Shelley _) (ShelleyScriptsNeeded ss) = ppSexp "ScriptsNeeded" [ppSet pcScriptHash ss]
+pcScriptsNeeded (Allegra _) (ShelleyScriptsNeeded ss) = ppSexp "ScriptsNeeded" [ppSet pcScriptHash ss]
+pcScriptsNeeded (Mary _) (ShelleyScriptsNeeded ss) = ppSexp "ScriptsNeeded" [ppSet pcScriptHash ss]
+pcScriptsNeeded p@(Alonzo _) (AlonzoScriptsNeeded pl) =
+  ppSexp "ScriptsNeeded" [ppList (ppPair (pcScriptPurpose p) pcScriptHash) pl]
+pcScriptsNeeded p@(Babbage _) (AlonzoScriptsNeeded pl) =
+  ppSexp "ScriptsNeeded" [ppList (ppPair (pcScriptPurpose p) pcScriptHash) pl]
+pcScriptsNeeded p@(Conway _) (AlonzoScriptsNeeded pl) =
+  ppSexp "ScriptsNeeded" [ppList (ppPair (pcScriptPurpose p) pcScriptHash) pl]
