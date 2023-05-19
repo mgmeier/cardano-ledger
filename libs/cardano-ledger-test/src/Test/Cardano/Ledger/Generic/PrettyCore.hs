@@ -115,7 +115,6 @@ import Cardano.Ledger.UMap (
   sPoolMap,
  )
 import qualified Cardano.Ledger.UMap as UM (UMap, UView (..), size)
-import qualified Cardano.Ledger.UMap as UM (UMap, View (..), size)
 import Cardano.Ledger.UTxO (ScriptsNeeded, UTxO (..))
 import qualified Cardano.Ledger.Val as Val
 import Control.State.Transition.Extended (STS (..))
@@ -1281,7 +1280,13 @@ pcCoin (Coin n) = hsep [ppString "₳", ppInteger n]
 instance PrettyC Coin era where prettyC _ = pcCoin
 
 pcValue :: MaryValue c -> PDoc
-pcValue (MaryValue n (MultiAsset m)) = ppSexp "Value" [ppInteger n, ppString ("num tokens = " ++ show (Map.size m))]
+pcValue (MaryValue n (MultiAsset m)) =
+  ppSexp
+    "Value"
+    [ ppInteger n
+    , -- , ppString ("num tokens = " ++ show (Map.size m))
+      ppSet pcPolicyID (Map.keysSet m)
+    ]
 
 instance c ~ EraCrypto era => PrettyC (MaryValue c) era where
   prettyC _ = pcValue
@@ -1403,8 +1408,6 @@ pcShelleyTxCert :: ShelleyTxCert c -> PDoc
 pcShelleyTxCert (ShelleyTxCertDelegCert x) = pcDelegCert x
 pcShelleyTxCert (ShelleyTxCertPool x) = pcPoolCert x
 pcShelleyTxCert (ShelleyTxCertGenesisDeleg _) = ppString "GenesisCert"
-pcShelleyTxCert (ShelleyTxCertMir _) = ppString "MirCert"
-pcShelleyTxCert (ShelleyTxCertGenesis _) = ppString "GenesisCert"
 pcShelleyTxCert (ShelleyTxCertMir (MIRCert x (StakeAddressesMIR m))) =
   ppRecord
     "MIRStakeAdresses"
@@ -1479,7 +1482,8 @@ pcTxBodyField proof x = case x of
   Update SNothing -> []
   Update (SJust _) -> [("update", ppString "UPDATE")]
   ReqSignerHashes s -> [("required hashes", ppSet pcKeyHash s)]
-  Mint v -> [("minted", multiAssetSummary v)]
+  -- Mint v -> [("minted", multiAssetSummary v)]
+  Mint (MultiAsset m) -> [("minted", ppSet pcPolicyID (Map.keysSet m))]
   WppHash SNothing -> []
   WppHash (SJust h) -> [("integrity hash", trim (ppSafeHash h))]
   AdHash SNothing -> []
@@ -1732,10 +1736,10 @@ pcDState :: DState c -> PDoc
 pcDState ds =
   ppRecord
     "DState"
-    [ ("rewards", ppMap pcCredential pcCoin (rewView (dsUnified ds)))
-    , ("deposits", ppMap pcCredential pcCoin (depositView (dsUnified ds)))
-    , ("delegate", ppMap pcCredential pcKeyHash (delView (dsUnified ds)))
-    , ("ptrs", ppMap ppPtr pcCredential (ptrView (dsUnified ds)))
+    [ ("rewards", ppMap pcCredential pcCoin (rewardMap (dsUnified ds)))
+    , ("deposits", ppMap pcCredential pcCoin (depositMap (dsUnified ds)))
+    , ("delegate", ppMap pcCredential pcKeyHash (sPoolMap (dsUnified ds)))
+    , ("ptrs", ppMap ppPtr ppCredential (ptrMap (dsUnified ds)))
     , ("fGenDel", ppMap pcFutureGenDeleg pcGenDelegPair (dsFutureGenDelegs ds))
     , ("GenDel", ppMap pcKeyHash pcGenDelegPair (unGenDelegs (dsGenDelegs ds)))
     , ("iRewards", pcIRewards (dsIRewards ds))

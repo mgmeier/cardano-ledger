@@ -47,9 +47,9 @@ nonNegativeInterval r = case (boundRational @NonNegativeInterval r) of
 
 genPParams :: Reflect era => Proof era -> Natural -> Natural -> Natural -> Gen (PParamsF era)
 genPParams proof tx bb bh = do
-  maxTxExUnits <- arbitrary :: Gen ExUnits
+  maxTxExUnits2 <- ExUnits <$> (fromIntegral <$> choose (100 :: Int, 10000)) <*> (fromIntegral <$> choose (100 :: Int, 10000))
   maxCollateralInputs <- elements [2 .. 5]
-  collateralPercentage <- fromIntegral <$> chooseInt (1, 10000)
+  collateralPercentage2 <- fromIntegral <$> chooseInt (1, 1000)
   minfeeA <- Coin <$> choose (0, 100)
   minfeeB <- Coin <$> choose (0, 10)
   pure
@@ -64,9 +64,9 @@ genPParams proof tx bb bh = do
           , MaxTxSize tx
           , MaxBBSize bb
           , MaxBHSize bh
-          , MaxTxExUnits maxTxExUnits
+          , MaxTxExUnits maxTxExUnits2
           , MaxCollateralInputs maxCollateralInputs
-          , CollateralPercentage collateralPercentage
+          , CollateralPercentage collateralPercentage2
           , ProtocolVersion $ protocolVersion proof
           , PoolDeposit $ Coin 5
           , KeyDeposit $ Coin 2
@@ -93,6 +93,17 @@ pParamsPreds p =
   , SumsTo (Right 1) (maxBBSize p) LTE [One (maxBHSize p), One (maxTxSize p)]
   , (protVer p) `CanFollow` (prevProtVer p)
   ]
+    ++ ( case whichPParams p of
+          PParamsShelleyToMary -> []
+          PParamsAlonzoToAlonzo ->
+            [ extract (maxTxExUnits p) (pparams p)
+            , extract (collateralPercentage p) (pparams p)
+            ]
+          PParamsBabbageToConway ->
+            [ extract (maxTxExUnits p) (pparams p)
+            , extract (collateralPercentage p) (pparams p)
+            ]
+       )
 
 pParamsStage ::
   Reflect era =>

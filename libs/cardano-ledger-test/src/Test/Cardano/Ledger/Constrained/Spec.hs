@@ -72,6 +72,7 @@ import Test.Cardano.Ledger.Constrained.Size (
  )
 import Test.Cardano.Ledger.Constrained.TypeRep (
   Rep (..),
+  format,
   genRep,
   synopsis,
   testEql,
@@ -366,7 +367,7 @@ sizeForRel (RelOper _ must (Just may) cant) = SzRng (Set.size must) (Set.size (S
 sizeForRel (RelLens _ _ _ spec) = sizeForRel spec
 
 maybeSynopsis :: Rep e t -> Maybe t -> String
-maybeSynopsis r (Just x) = synopsis r x
+maybeSynopsis r (Just x) = format r x
 maybeSynopsis _ _ = ""
 
 synSet :: Ord t => Rep era t -> Set t -> String
@@ -386,7 +387,7 @@ relOper r must may cant =
               ( univSubset must may
               ,
                 [ "'must' "
-                    ++ synopsis (SetR r) must
+                    ++ format (SetR r) must
                     ++ " Is not a subset of: 'may' "
                     ++ maybeSynopsis (SetR r) may
                 ]
@@ -736,7 +737,7 @@ mergeRngSpec a b@(RngElem _ xs)
 mergeRngSpec a@(RngSum small1 sz1) b@(RngSum small2 sz2) =
   case sz1 <> sz2 of
     SzNever xs -> RngNever (["The RngSpec's are inconsistent.\n  " ++ show a ++ "\n  " ++ show b] ++ xs)
-    sz3 -> RngSum (min small1 small2) sz3
+    sz3 -> RngSum (smallerOf small1 small2) sz3
 mergeRngSpec a@(RngRel r1) b@(RngRel r2) =
   case r1 <> r2 of
     RelNever xs -> RngNever (["The RngSpec's are inconsistent.\n  " ++ show a ++ "\n  " ++ show b] ++ xs)
@@ -785,7 +786,7 @@ genFromRngSpec msgs genr n x = case x of
 --   (EQL, LTH, LTE, GTE, GTH) in RngSum and RngProj, we make the total a bit larger than 'n'
 genRngSpec ::
   forall w era.
-  Adds w =>
+  (Ord w, Adds w) =>
   Gen w ->
   Rep era w ->
   -- Rep era c ->
@@ -838,7 +839,7 @@ instance Sums Coin Word64 where
   genT _ n = pure (Coin (fromIntegral n))
 
 genConsistentRngSpec ::
-  Adds w =>
+  (Ord w, Adds w) =>
   Int ->
   Gen w ->
   Rep era w ->
@@ -1004,7 +1005,18 @@ instance LiftT (MapSpec era a b) where
   dropT (Typed (Right x)) = x
 
 showMapSpec :: MapSpec era dom rng -> String
-showMapSpec (MapSpec w d p r) = sepsP ["MapSpec", show w, showRelSpec d, showPairSpec p, showRngSpec r]
+showMapSpec (MapSpec w d p r) =
+  "("
+    ++ unlines
+      [ "MapSpec"
+      , "   " ++ show w
+      , "   "
+          ++ "   "
+          ++ showRelSpec d
+      , "   " ++ showPairSpec p
+      , "   " ++ showRngSpec r
+      ]
+    ++ ")"
 showMapSpec (MapNever _) = "MapNever"
 
 mergeMapSpec :: Ord dom => MapSpec era dom rng -> MapSpec era dom rng -> MapSpec era dom rng
@@ -1048,27 +1060,30 @@ mapSpec sz1 rel pair rng =
           case (rel, pair, rng) of
             (_, PairAny, _) -> pure (MapSpec size rel pair rng)
             ((RelOper _ mustd _ _), PairSpec d r m, (RngRel (RelOper _ mustr _ _))) ->
-              requireAll
-                [
-                  ( not (Map.keysSet m `Set.isSubsetOf` mustd)
-                  ,
-                    [ "Creating " ++ show (MapSpec sz1 rel pair rng) ++ " fails."
-                    , "It has PairSpec inconsistencies. The domain of"
-                    , "   " ++ synopsis (MapR d r) m ++ " is not a subset of the of the mustSet"
-                    , "   " ++ synopsis (SetR d) mustd
+              explain
+                ("Creating " ++ show (MapSpec sz1 rel pair rng) ++ " fails.")
+                ( requireAll
+                    [
+                      ( (Map.keysSet m `Set.isSubsetOf` mustd)
+                      ,
+                        [ "It has PairSpec inconsistencies. The domain of"
+                        , "   " ++ synopsis (MapR d r) m ++ " is not a subset of the of the mustSet"
+                        , "   " ++ synopsis (SetR d) mustd
+                        , "   TEST " ++ show (Map.keysSet m `Set.isSubsetOf` mustd)
+                        ]
+                      )
+                    ,
+                      ( (Set.fromList (Map.elems m) `Set.isSubsetOf` mustr)
+                      ,
+                        [ "It has PairSpec inconsistencies. The range of"
+                        , "   " ++ synopsis (MapR d r) m ++ " is not a subset of the of the mustSet"
+                        , "   " ++ synopsis (SetR r) mustr
+                        , "   TEST " ++ show (Map.keysSet m `Set.isSubsetOf` mustd)
+                        ]
+                      )
                     ]
-                  )
-                ,
-                  ( not (Set.fromList (Map.elems m) `Set.isSubsetOf` mustr)
-                  ,
-                    [ "Creating " ++ show (MapSpec sz1 rel pair rng) ++ " fails."
-                    , "It has PairSpec inconsistencies. The range of"
-                    , "   " ++ synopsis (MapR d r) m ++ " is not a subset of the of the mustSet"
-                    , "   " ++ synopsis (SetR r) mustr
-                    ]
-                  )
-                ]
-                (pure (MapSpec size rel pair rng))
+                    (pure (MapSpec size rel pair rng))
+                )
             (_, PairSpec _d _r _m, _) ->
               failT
                 [ "Creating " ++ show (MapSpec sz1 rel pair rng) ++ " fails."
@@ -1108,7 +1123,7 @@ sizeForMapSpec (MapNever _) = SzAny
 -- | Generate a random MapSpec
 genMapSpec ::
   forall era dom w.
-  (Ord dom, Era era, Adds w) =>
+  (Ord dom, Era era, Ord w, Adds w) =>
   Gen dom ->
   Rep era dom ->
   Rep era w ->
@@ -1468,13 +1483,13 @@ mergeElemSpec b@(ElemSum _ _) a@(ElemEqual _ _) = mergeElemSpec a b
 mergeElemSpec a@(ElemSum sm1 sz1) b@(ElemSum sm2 sz2) =
   case sz1 <> sz2 of
     SzNever xs -> ElemNever ((sepsP ["The ElemSpec's are inconsistent.", show a, show b]) : xs)
-    sz3 -> ElemSum (min sm1 sm2) sz3
+    sz3 -> ElemSum (smallerOf sm1 sm2) sz3
 mergeElemSpec a@(ElemProj sm1 r1 sz1) b@(ElemProj sm2 r2 sz2) =
   case testEql r1 r2 of
     Just Refl ->
       case sz1 <> sz2 of
         SzNever xs -> ElemNever ((sepsP ["The ElemSpec's are inconsistent.", show a, show b]) : xs)
-        sz3 -> ElemProj (min sm1 sm2) r1 sz3
+        sz3 -> ElemProj (smallerOf sm1 sm2) r1 sz3
     Nothing -> ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
 mergeElemSpec a b = ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
 
@@ -1779,7 +1794,7 @@ genSet n gen = do
   xs <- vectorOf 20 gen
   pure (Set.fromList (take n (List.nub xs)))
 
-testSet :: TestAdd t => Gen (Set t)
+testSet :: (Ord t, TestAdd t) => Gen (Set t)
 testSet = do
   n <- pos @Int
   Set.fromList <$> vectorOf n anyAdds

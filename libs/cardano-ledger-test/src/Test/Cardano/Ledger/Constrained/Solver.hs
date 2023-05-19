@@ -40,6 +40,7 @@ import Test.Cardano.Ledger.Constrained.Size (
   OrdCond (..),
   Size (..),
   genFromIntRange,
+  genFromSize,
   vLeft,
   vRight,
   vRightNeg,
@@ -66,6 +67,7 @@ import Test.Cardano.Ledger.Constrained.Spec (
 import Test.Cardano.Ledger.Constrained.TypeRep (
   Rep (..),
   genRep,
+  genSizedRep,
   hasEq,
   hasOrd,
   synopsis,
@@ -144,11 +146,11 @@ simplifySet r1 term = do
   Refl <- sameRep (SetR r1) (termRep term)
   pure (With x)
 
-simplifyList :: Rep era rng -> Term era y -> Typed (HasConstraint Ord [rng])
+simplifyList :: Rep era rng -> Term era y -> Typed (HasConstraint Eq [rng])
 simplifyList r1 term = do
   x <- simplify term
   Refl <- sameRep (ListR r1) (termRep term)
-  hasOrd r1 x
+  hasEq r1 x
 
 -- | Is the Sum a variable (of a map). Only SumMap and Project store maps.
 isMapVar :: Name era -> Sum era c -> Bool
@@ -286,23 +288,33 @@ solveMap v1@(V _ r@(MapR dom rng) _) predicate = explain msg $ case predicate of
     With _ <- hasOrd rng rng
     With set <- simplifySet rng expr
     mapSpec SzAny RelAny PairAny (RngRel $ relDisjoint rng set)
-  (Member (HashS expr) (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
+  (Member (Left (HashS expr)) (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
     Refl <- sameRep dom a
     ScriptF _ x <- simplifyAtType (ScriptR reify) expr
     let hash = hashScript @era x
     mapSpec (SzLeast 1) (relSuperset dom (Set.singleton hash)) PairAny RngAny
-  (Member (HashD expr) (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
+  (Member (Right (HashS expr)) (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
+    Refl <- sameRep dom a
+    ScriptF _ x <- simplifyAtType (ScriptR reify) expr
+    let hash = hashScript @era x
+    mapSpec (SzLeast 1) (relSuperset dom (Set.singleton hash)) PairAny RngAny
+  (Member (Left (HashD expr)) (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
+    Refl <- sameRep dom a
+    x <- simplifyAtType DataR expr
+    let hash = hashData @era x
+    mapSpec (SzLeast 1) (relSuperset dom (Set.singleton hash)) PairAny RngAny
+  (Member (Right (HashD expr)) (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
     Refl <- sameRep dom a
     x <- simplifyAtType DataR expr
     let hash = hashData @era x
     mapSpec (SzLeast 1) (relSuperset dom (Set.singleton hash)) PairAny RngAny
   (Member expr (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
     Refl <- sameRep dom a
-    x <- simplify expr
+    x <- simplify (direct expr)
     mapSpec (SzLeast 1) (relSuperset dom (Set.singleton x)) PairAny RngAny
   (Member expr (Rng (Var v2@(V _ (MapR _ b) _)))) | Name v1 == Name v2 -> do
     Refl <- sameRep rng b
-    x <- simplify expr
+    x <- simplify (direct expr)
     mapSpec (SzLeast 1) RelAny PairAny (RngRel (relSuperset rng (Set.singleton x)))
   (NotMember expr (Dom (Var v2@(V _ (MapR a _) _)))) | Name v1 == Name v2 -> do
     Refl <- sameRep dom a
@@ -312,7 +324,17 @@ solveMap v1@(V _ r@(MapR dom rng) _) predicate = explain msg $ case predicate of
     Refl <- sameRep rng b
     x <- simplify expr
     mapSpec SzAny RelAny PairAny (RngRel (relDisjoint rng (Set.singleton x)))
-  (MapMember exprK exprV (Var v2@(V _ (MapR dom2 rng2) _))) | Name v1 == Name v2 -> do
+  (MapMember exprK exprV (Left (Var v2@(V _ (MapR dom2 rng2) _)))) | Name v1 == Name v2 -> do
+    Refl <- sameRep dom dom2
+    Refl <- sameRep rng rng2
+    k <- simplify exprK
+    v <- simplify exprV
+    mapSpec
+      (SzLeast 1)
+      (relSuperset dom (Set.singleton k))
+      (PairSpec dom rng (Map.singleton k v))
+      (RngRel (relSuperset rng (Set.singleton v)))
+  (MapMember exprK exprV (Right (Var v2@(V _ (MapR dom2 rng2) _)))) | Name v1 == Name v2 -> do
     Refl <- sameRep dom dom2
     Refl <- sameRep rng rng2
     k <- simplify exprK
@@ -333,6 +355,15 @@ solveMap v1@(V _ r@(MapR dom rng) _) predicate = explain msg $ case predicate of
       (relEqual dl (makeFromList ds))
       (PairSpec dom rng (Map.fromList ys))
       (RngRel (relEqual rl (makeFromList rs)))
+  (SubMap subMapExpr (Var v2@(V _ (MapR dom2 rng2) _))) | Name v1 == Name v2 -> do
+    Refl <- sameRep dom dom2
+    Refl <- sameRep rng rng2
+    m <- simplify subMapExpr
+    mapSpec
+      (SzLeast (Map.size m))
+      (relSuperset dom (Map.keysSet m))
+      (PairSpec dom rng m)
+      (RngRel (relSuperset rng (Set.fromList (Map.elems m))))
   other -> failT ["Cannot solve map condition: " ++ show other]
   where
     msg = ("Solving for " ++ show v1 ++ " Predicate \n   " ++ show predicate)
@@ -408,19 +439,29 @@ solveSet v1@(V _ (SetR r) _) predicate = case predicate of
     With set <- simplifySet r expr
     setSpec SzAny (relDisjoint r set)
   (Disjoint expr (Var v2)) -> solveSet v1 (Disjoint (Var v2) expr)
-  (Member (HashS expr) (Var v2@(V _ (SetR ScriptHashR) _))) | Name v1 == Name v2 -> do
+  (Member (Left (HashS expr)) (Var v2@(V _ (SetR ScriptHashR) _))) | Name v1 == Name v2 -> do
     Refl <- sameRep r ScriptHashR
     ScriptF _ x <- simplifyAtType (ScriptR reify) expr
     let hash = hashScript @era x
     setSpec (SzLeast 1) (relSuperset r (Set.singleton hash))
-  (Member (HashD expr) (Var v2@(V _ (SetR DataHashR) _))) | Name v1 == Name v2 -> do
+  (Member (Right (HashS expr)) (Var v2@(V _ (SetR ScriptHashR) _))) | Name v1 == Name v2 -> do
+    Refl <- sameRep r ScriptHashR
+    ScriptF _ x <- simplifyAtType (ScriptR reify) expr
+    let hash = hashScript @era x
+    setSpec (SzLeast 1) (relSuperset r (Set.singleton hash))
+  (Member (Left (HashD expr)) (Var v2@(V _ (SetR DataHashR) _))) | Name v1 == Name v2 -> do
+    Refl <- sameRep r DataHashR
+    x <- simplifyAtType DataR expr
+    let hash = hashData @era x
+    setSpec (SzLeast 1) (relSuperset r (Set.singleton hash))
+  (Member (Right (HashD expr)) (Var v2@(V _ (SetR DataHashR) _))) | Name v1 == Name v2 -> do
     Refl <- sameRep r DataHashR
     x <- simplifyAtType DataR expr
     let hash = hashData @era x
     setSpec (SzLeast 1) (relSuperset r (Set.singleton hash))
   (Member expr (Var v2@(V _ (SetR a) _))) | Name v1 == Name v2 -> do
     Refl <- sameRep a r
-    x <- simplify expr
+    x <- simplify (direct expr)
     setSpec (SzLeast 1) (relSuperset r (Set.singleton x))
   (NotMember expr (Var v2@(V _ (SetR a) _))) | Name v1 == Name v2 -> do
     Refl <- sameRep a r
@@ -670,9 +711,12 @@ dispatch v1@(V nam r1 _) preds = explain ("Solving for variable " ++ nam ++ show
     pure (pure t)
   [Sized (Var v2@(V _ r2 _)) term] | Name v1 == Name v2 -> do
     Refl <- sameRep r1 r2
-    -- Refl <- sameRep r2 SizeR
     x <- simplify term
     pure $ pure (SzExact (getSize x))
+  [Sized sizeterm (Var v2@(V _ r2 _))] | Name v1 == Name v2 -> do
+    Refl <- sameRep r1 r2
+    sz <- simplify sizeterm
+    pure $ do n <- genFromSize sz; genSizedRep n r2
   [cc@(Component (Right (Var v2)) cs)] | Name v1 == Name v2 -> explain ("Solving " ++ show cc) $ do
     pairs <- mapM (anyToUpdate r1) cs
     pure $ do t <- genRep r1; pure (update t pairs)
@@ -700,21 +744,42 @@ dispatch v1@(V nam r1 _) preds = explain ("Solving for variable " ++ nam ++ show
     Refl <- sameRep r1 r2
     x <- simplifyTarget @era @t target
     pure (pure x)
-  [pred1@(Member (HashS (Var v2@(V _ (ScriptR p) _))) (Dom expr))] | Name v1 == Name v2 -> do
+  [pred1@(Member (Left (HashS (Var v2@(V _ (ScriptR p) _)))) (Dom expr))] | Name v1 == Name v2 -> do
     Refl <- sameRep r1 (ScriptR p)
     case termRep expr of
       mt@(MapR ScriptHashR (ScriptR _)) -> do
         m <- simplifyAtType mt expr
         pure (snd <$> genFromMap ["dispatch " ++ show v1 ++ " " ++ show preds] m)
       other -> failT ["The Pred: " ++ show pred1, "Can only be applied to a map whose range is 'Script'.", show other]
-  [pred1@(Member (HashD (Var v2@(V _ DataR _))) (Dom expr))] | Name v1 == Name v2 -> do
+  [pred1@(Member (Right (HashS (Var v2@(V _ (ScriptR p) _)))) (Dom expr))] | Name v1 == Name v2 -> do
+    Refl <- sameRep r1 (ScriptR p)
+    case termRep expr of
+      mt@(MapR ScriptHashR (ScriptR _)) -> do
+        m <- simplifyAtType mt expr
+        pure (snd <$> genFromMap ["dispatch " ++ show v1 ++ " " ++ show preds] m)
+      other -> failT ["The Pred: " ++ show pred1, "Can only be applied to a map whose range is 'Script'.", show other]
+  [pred1@(Member (Left (HashD (Var v2@(V _ DataR _)))) (Dom expr))] | Name v1 == Name v2 -> do
     Refl <- sameRep r1 DataR
     case termRep expr of
       mt@(MapR DataHashR DataR) -> do
         m <- simplifyAtType mt expr
         pure (snd <$> genFromMap ["dispatch " ++ show v1 ++ " " ++ show preds] m)
       other -> failT ["The Pred: " ++ show pred1, "Can only be applied to a map whose range is 'Data'.", show other]
-  [Member (Var v2@(V _ r2 _)) expr] | Name v1 == Name v2 -> do
+  [pred1@(Member (Right (HashD (Var v2@(V _ DataR _)))) (Dom expr))] | Name v1 == Name v2 -> do
+    Refl <- sameRep r1 DataR
+    case termRep expr of
+      mt@(MapR DataHashR DataR) -> do
+        m <- simplifyAtType mt expr
+        pure (snd <$> genFromMap ["dispatch " ++ show v1 ++ " " ++ show preds] m)
+      other -> failT ["The Pred: " ++ show pred1, "Can only be applied to a map whose range is 'Data'.", show other]
+  [Member (Left (Var v2@(V _ r2 _))) expr] | Name v1 == Name v2 -> do
+    Refl <- sameRep r1 r2
+    set <- simplify expr
+    let msgs = ("Solving for variable " ++ nam) : map show preds
+    if Set.null set
+      then failT (("The set is empty " ++ synopsis (termRep expr) set ++ ", can't find an element.") : msgs)
+      else pure (fst <$> itemFromSet msgs set)
+  [Member (Right (Var v2@(V _ r2 _))) expr] | Name v1 == Name v2 -> do
     Refl <- sameRep r1 r2
     set <- simplify expr
     let msgs = ("Solving for variable " ++ nam) : map show preds
@@ -728,7 +793,7 @@ dispatch v1@(V nam r1 _) preds = explain ("Solving for variable " ++ nam ++ show
     pure $ suchThatErr msgs (genRep r2) (`Set.notMember` set)
   [MapMember (Var v2@(V _ r2 _)) exprVal exprMap] | Name v1 == Name v2 -> do
     Refl <- sameRep r1 r2
-    m <- simplify exprMap
+    m <- simplify (direct exprMap)
     v <- simplify exprVal
     let m2 = Map.filter (== v) m
     let msgs = ("Solving for variable " ++ nam) : map show preds
@@ -737,7 +802,7 @@ dispatch v1@(V nam r1 _) preds = explain ("Solving for variable " ++ nam ++ show
       else pure (fst <$> itemFromSet msgs (Map.keysSet m2))
   [MapMember exprKey (Var v2@(V _ r2 _)) exprMap] | Name v1 == Name v2 -> do
     Refl <- sameRep r1 r2
-    m <- simplify exprMap
+    m <- simplify (direct exprMap)
     k <- simplify exprKey
     let msgs = ("Solving for variable " ++ nam) : map show preds
     case Map.lookup k m of
@@ -761,8 +826,7 @@ dispatch v1@(V nam r1 _) preds = explain ("Solving for variable " ++ nam ++ show
     _other
       | isAddsType r1 -> do
           With v2 <- hasAdds r1 v1
-          sumv <- -- trace ("SOLVE SUMS "++show v2++"\n"++show cs++"\n\n") $
-            solveSums v2 cs
+          sumv <- solveSums v2 cs
           let msgs = ("Solving for variable " ++ nam) : map show preds
           pure $ genAdds msgs sumv
       | isCountType r1 -> do
@@ -839,8 +903,8 @@ toolChainSub _proof order cs subst0 = do
 
 toolChain :: Era era => Proof era -> OrderInfo -> [Pred era] -> Subst era -> Gen (Env era)
 toolChain _proof order cs subst0 = do
-  (_count, g@(DependGraph pairs)) <- compileGen order (map (substPredWithVarTest subst0) cs)
-  subst <- trace ("GRAPH\n" ++ show g) $ foldlM' solveOneVar subst0 pairs
+  (_count, DependGraph pairs) <- compileGen order (map (substPredWithVarTest subst0) cs)
+  subst <- foldlM' solveOneVar subst0 pairs
   monadTyped $ substToEnv subst emptyEnv
 
 -- InitUniv p >>= (toolChainSub p _ _ _)  >>= (toolChainSub p _ _ _) >>= (toolChain p _ _)

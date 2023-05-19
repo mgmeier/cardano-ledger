@@ -25,6 +25,7 @@ library
         Test.Cardano.Ledger.Constrained.Examples
         Test.Cardano.Ledger.Constrained.Lenses
         Test.Cardano.Ledger.Constrained.Monad
+        Test.Cardano.Ledger.Constrained.Pairing
         Test.Cardano.Ledger.Constrained.Preds.PParams
         Test.Cardano.Ledger.Constrained.Preds.Universes
         Test.Cardano.Ledger.Constrained.Preds.TxOut

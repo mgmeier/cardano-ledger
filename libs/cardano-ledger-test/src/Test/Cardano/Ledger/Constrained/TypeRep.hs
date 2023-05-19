@@ -35,19 +35,21 @@ module Test.Cardano.Ledger.Constrained.TypeRep (
   stringR,
   hasOrd,
   hasEq,
+  format,
 )
 where
 
 import Cardano.Ledger.Address (Addr (..), RewardAcnt (..))
 import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
-import Cardano.Ledger.Alonzo.Scripts (ExUnits, Tag)
+import Cardano.Ledger.Alonzo.Scripts (ExUnits (..), Tag)
 import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), dataToBinaryData)
 import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..))
-import Cardano.Ledger.BaseTypes (EpochNo (..), Network (..), ProtVer (..), SlotNo (..))
+import Cardano.Ledger.BaseTypes (EpochNo (..), Network (..), ProtVer (..), SlotNo (..), mkTxIxPartial)
 import Cardano.Ledger.Binary.Version (Version)
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Credential (Credential, Ptr)
+import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.EpochBoundary (SnapShots (..))
 import Cardano.Ledger.Era (Era (EraCrypto))
 import Cardano.Ledger.Hashes (DataHash, ScriptHash (..))
@@ -55,15 +57,18 @@ import Cardano.Ledger.Keys (GenDelegPair (..), KeyHash, KeyRole (..))
 import Cardano.Ledger.Mary.Value (AssetName (..), MultiAsset (..), PolicyID (..))
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import Cardano.Ledger.PoolParams (PoolParams (ppId))
-import Cardano.Ledger.Pretty (PDoc, ppInteger, ppRecord', ppString)
+import Cardano.Ledger.Pretty (PDoc, ppInteger, ppList, ppMap, ppMaybe, ppRecord', ppSet, ppString)
 import Cardano.Ledger.Pretty.Alonzo (ppRdmrPtr)
 import Cardano.Ledger.Pretty.Mary (ppValidityInterval)
 
+import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptPurpose (..))
+import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..))
 import Cardano.Ledger.Conway.TxCert (ConwayTxCert (..))
 import Cardano.Ledger.Shelley.LedgerState
 import Cardano.Ledger.Shelley.Rewards (Reward (..))
 import Cardano.Ledger.Shelley.TxCert (MIRPot (..), ShelleyTxCert (..))
-import Cardano.Ledger.TxIn (TxIn)
+import Cardano.Ledger.Shelley.UTxO (ShelleyScriptsNeeded (..))
+import Cardano.Ledger.TxIn (TxIn (..))
 import Cardano.Ledger.UTxO (UTxO (..))
 import Cardano.Ledger.Val (Val ((<+>)))
 import qualified Data.List as List
@@ -73,7 +78,7 @@ import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Universe (Eql, Shape (..), Shaped (..), Singleton (..), cmpIndex, (:~:) (Refl))
-import Data.Word (Word64)
+import Data.Word (Word16, Word64)
 import Lens.Micro
 import Numeric.Natural (Natural)
 import Prettyprinter (hsep)
@@ -83,6 +88,8 @@ import Test.Cardano.Ledger.Constrained.Classes (
   PParamsF (..),
   PParamsUpdateF (..),
   ScriptF (..),
+  ScriptsNeededF (..),
+  TxBodyF (..),
   TxCertF (..),
   TxOutF (..),
   ValueF (..),
@@ -113,7 +120,6 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcData,
   pcDataHash,
   pcDatum,
-  pcExUnits,
   pcFutureGenDeleg,
   pcGenDelegPair,
   pcIndividualPoolStake,
@@ -121,6 +127,7 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcReward,
   pcRewardAcnt,
   pcScriptHash,
+  pcScriptPurpose,
   pcShelleyTxCert,
   pcTxCert,
   pcTxIn,
@@ -128,7 +135,8 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcVal,
   pcWitnessesField,
  )
-import Test.Cardano.Ledger.Generic.Proof (Evidence (..), Proof (..), unReflect)
+import Test.Cardano.Ledger.Generic.Proof
+import Test.Cardano.Ledger.Generic.Updaters (newTxBody)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.Ledger.Shelley.Serialisation.Generators ()
 import Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators ()
@@ -183,7 +191,7 @@ data Rep era t where
   MaybeR :: Rep era t -> Rep era (Maybe t)
   SlotNoR :: Rep era SlotNo
   SizeR :: Rep era Size
-  MultiAssetR :: Rep era (MultiAsset (EraCrypto era))
+  MultiAssetR :: Crypto (EraCrypto era) => Rep era (MultiAsset (EraCrypto era))
   PolicyIDR :: Rep era (PolicyID (EraCrypto era))
   WitnessesFieldR :: Proof era -> Rep era (WitnessesField era)
   AssetNameR :: Rep era AssetName
@@ -206,6 +214,11 @@ data Rep era t where
   ShelleyTxCertR :: Rep era (ShelleyTxCert era)
   ConwayTxCertR :: Rep era (ConwayTxCert era)
   MIRPotR :: Rep era MIRPot
+  IsValidR :: Rep era IsValid
+  IntegerR :: Rep era Integer
+  ScriptsNeededR :: Proof era -> Rep era (ScriptsNeededF era)
+  ScriptPurposeR :: Proof era -> Rep era (ScriptPurpose era)
+  TxBodyR :: Proof era -> Rep era (TxBodyF era)
 
 stringR :: Rep era String
 stringR = ListR CharR
@@ -301,6 +314,14 @@ instance Singleton (Rep e) where
   testEql ConwayTxCertR ConwayTxCertR = Just Refl
   testEql ShelleyTxCertR ShelleyTxCertR = Just Refl
   testEql MIRPotR MIRPotR = Just Refl
+  testEql IsValidR IsValidR = Just Refl
+  testEql IntegerR IntegerR = Just Refl
+  testEql (ScriptsNeededR c) (ScriptsNeededR d) =
+    do Refl <- testEql c d; pure Refl
+  testEql (ScriptPurposeR c) (ScriptPurposeR d) =
+    do Refl <- testEql c d; pure Refl
+  testEql (TxBodyR c) (TxBodyR d) =
+    do Refl <- testEql c d; pure Refl
   testEql _ _ = Nothing
   cmpIndex x y = compare (shape x) (shape y)
 
@@ -351,7 +372,7 @@ instance Show (Rep era t) where
   show CommHotHashR = "CommHotHash"
   show VCredR = "(Credential 'Voting c)"
   show VHashR = "(KeyHash 'Voting c)"
-  show MultiAssetR = "(MutiAsset c)"
+  show MultiAssetR = "(MultiAsset c)"
   show PolicyIDR = "(PolicyID c)"
   show (WitnessesFieldR p) = "(WitnessesField " ++ short p ++ ")"
   show AssetNameR = "AssetName"
@@ -374,6 +395,11 @@ instance Show (Rep era t) where
   show ConwayTxCertR = "(ConwayTxCert era)"
   show ShelleyTxCertR = "(ShelleyTxCert era)"
   show MIRPotR = "MIRPot"
+  show IsValidR = "IsValid"
+  show IntegerR = "Integer"
+  show (ScriptsNeededR p) = "(ScriptsNeeded " ++ short p ++ ")"
+  show (ScriptPurposeR p) = "(ScriptPurpose " ++ short p ++ ")"
+  show (TxBodyR p) = "(TxBody " ++ short p ++ ")"
 
 synopsis :: forall e t. Rep e t -> t -> String
 synopsis RationalR r = show r
@@ -447,7 +473,7 @@ synopsis NetworkR x = show x
 synopsis RdmrPtrR x = show (ppRdmrPtr x)
 synopsis DataR x = show (pcData x)
 synopsis DatumR x = show (pcDatum x)
-synopsis ExUnitsR x = show (pcExUnits x)
+synopsis ExUnitsR (ExUnits m d) = "(ExUnits mem=" ++ show m ++ " data=" ++ show d ++ ")"
 synopsis TagR x = show x
 synopsis DataHashR x = show (pcDataHash x)
 synopsis AddrR x = show (pcAddr x)
@@ -455,6 +481,11 @@ synopsis PCredR c = show (credSummary c)
 synopsis ConwayTxCertR x = show (pcConwayTxCert x)
 synopsis ShelleyTxCertR x = show (pcShelleyTxCert x)
 synopsis MIRPotR x = show x
+synopsis IsValidR x = show x
+synopsis IntegerR x = show x
+synopsis (ScriptsNeededR _) x = show x
+synopsis (ScriptPurposeR p) x = show (pcScriptPurpose p x)
+synopsis (TxBodyR _) x = show x
 
 
 synSum :: Rep era a -> a -> String
@@ -465,22 +496,23 @@ synSum (MapR _ Word64R) m = ", sum = " ++ show (Map.foldl' (+) 0 m)
 synSum (MapR _ IPoolStakeR) m = ", sum = " ++ show (Map.foldl' accum 0 m)
   where
     accum z (IndividualPoolStake rat _) = z + rat
-synSum (MapR _ (TxOutR proof)) m = ", sum = " ++ show (Map.foldl' (accum proof) (Coin 0) m)
-  where
-    accum :: Proof era -> Coin -> TxOutF era -> Coin
-    accum (Shelley _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
-    accum (Allegra _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
-    accum (Mary _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
-    accum (Alonzo _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
-    accum (Babbage _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
-    accum (Conway _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
+synSum (MapR _ (TxOutR proof)) m = ", sum = " ++ show (Map.foldl' (accumTxOut proof) (Coin 0) m)
 synSum (SetR CoinR) m = ", sum = " ++ show (pcCoin (Set.foldl' (<>) mempty m))
 synSum (SetR RationalR) m = ", sum = " ++ show (Set.foldl' (+) 0 m)
 synSum (ListR CoinR) m = ", sum = " ++ show (List.foldl' (<>) mempty m)
 synSum (ListR RationalR) m = ", sum = " ++ show (List.foldl' (+) 0 m)
 synSum (ListR IntR) m = ", sum = " ++ show (List.foldl' (+) 0 m)
 synSum (ListR Word64R) m = ", sum = " ++ show (List.foldl' (+) 0 m)
+synSum (ListR (TxOutR proof)) m = ", sum = " ++ show (List.foldl' (accumTxOut proof) (Coin 0) m)
 synSum _ _ = ""
+
+accumTxOut :: Proof era -> Coin -> TxOutF era -> Coin
+accumTxOut (Shelley _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
+accumTxOut (Allegra _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
+accumTxOut (Mary _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
+accumTxOut (Alonzo _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
+accumTxOut (Babbage _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
+accumTxOut (Conway _) z (TxOutF _ out) = z <+> (out ^. Core.coinTxOutL)
 
 -- ==================================================
 
@@ -526,39 +558,34 @@ instance Shaped (Rep era) any where
   shape (PairR a b) = Nary 38 [shape a, shape b]
   shape VCredR = Nullary 39
   shape VHashR = Nullary 40
-  shape CommColdHashR = Nullary 41
-  shape CommHotHashR = Nullary 42
-  shape MultiAssetR = Nullary 43
-  shape PolicyIDR = Nullary 44
-  shape (WitnessesFieldR p) = Nary 45 [shape p]
-  shape AssetNameR = Nullary 46
-  shape DCertR = Nullary 47
-  shape RewardAcntR = Nullary 48
-  shape ValidityIntervalR = Nullary 49
- 
-  shape MultiAssetR = Nullary 50
-  shape PolicyIDR = Nullary 51
-  shape (WitnessesFieldR p) = Nary 52 [shape p]
-  shape AssetNameR = Nullary 53
-  shape (TxCertR p) = Nary 54 [shape p]
-  shape RewardAcntR = Nullary 55
-  shape ValidityIntervalR = Nullary 56
-  shape KeyPairR = Nullary 57
-  shape (GenR x) = Nary 58 [shape x]
-  shape (ScriptR p) = Nary 59 [shape p]
-  shape ScriptHashR = Nullary 60
-  shape NetworkR = Nullary 61
-  shape RdmrPtrR = Nullary 62
-  shape DataR = Nullary 63
-  shape DatumR = Nullary 64
-  shape ExUnitsR = Nullary 65
-  shape TagR = Nullary 66
-  shape DataHashR = Nullary 67
-  shape AddrR = Nullary 68
-  shape PCredR = Nullary 69
-  shape ConwayTxCertR = Nullary 70
-  shape ShelleyTxCertR = Nullary 71
-  shape MIRPotR = Nullary 72
+  shape MultiAssetR = Nullary 41
+  shape PolicyIDR = Nullary 42
+  shape (WitnessesFieldR p) = Nary 43 [shape p]
+  shape AssetNameR = Nullary 44
+  shape (TxCertR p) = Nary 45 [shape p]
+  shape RewardAcntR = Nullary 46
+  shape ValidityIntervalR = Nullary 47
+  shape KeyPairR = Nullary 48
+  shape (GenR x) = Nary 49 [shape x]
+  shape (ScriptR p) = Nary 50 [shape p]
+  shape ScriptHashR = Nullary 51
+  shape NetworkR = Nullary 52
+  shape RdmrPtrR = Nullary 53
+  shape DataR = Nullary 54
+  shape DatumR = Nullary 55
+  shape ExUnitsR = Nullary 56
+  shape TagR = Nullary 57
+  shape DataHashR = Nullary 58
+  shape AddrR = Nullary 59
+  shape PCredR = Nullary 60
+  shape ConwayTxCertR = Nullary 61
+  shape ShelleyTxCertR = Nullary 62
+  shape MIRPotR = Nullary 63
+  shape IsValidR = Nullary 64
+  shape IntegerR = Nullary 65
+  shape (ScriptsNeededR p) = Nary 66 [shape p]
+  shape (ScriptPurposeR p) = Nary 67 [shape p]
+  shape (TxBodyR p) = Nary 68 [shape p]
 
 
 compareRep :: forall era t s. Rep era t -> Rep era s -> Ordering
@@ -592,7 +619,7 @@ genSizedRep _ Word64R = choose (0, 1000)
 genSizedRep _ IntR = arbitrary
 genSizedRep _ NaturalR = arbitrary
 genSizedRep _ FloatR = arbitrary
-genSizedRep _ TxInR = arbitrary
+genSizedRep n TxInR = TxIn <$> arbitrary <*> pure (mkTxIxPartial (fromIntegral (min n (fromIntegral (maxBound :: Word16)))))
 genSizedRep _ CharR = arbitrary
 genSizedRep _ (ValueR p) = genValue p
 genSizedRep _ (TxOutR p) = genTxOut p
@@ -619,6 +646,7 @@ genSizedRep _ VHashR = arbitrary
 genSizedRep _ CommColdHashR = arbitrary
 genSizedRep _ CommHotHashR = arbitrary
 genSizedRep _ MultiAssetR = arbitrary
+genSizedRep n MultiAssetR = MultiAsset <$> genSizedRep n (MapR (PolicyIDR @era) (MapR AssetNameR IntegerR))
 genSizedRep _ PolicyIDR = arbitrary
 genSizedRep _ (WitnessesFieldR _) = pure $ AddrWits Set.empty
 genSizedRep _ AssetNameR = arbitrary
@@ -651,6 +679,22 @@ genSizedRep _ PCredR = arbitrary
 genSizedRep _ ShelleyTxCertR = arbitrary
 genSizedRep _ ConwayTxCertR = arbitrary
 genSizedRep _ MIRPotR = arbitrary
+genSizedRep _ IsValidR = frequency [(1, pure (IsValid False)), (9, pure (IsValid True))]
+genSizedRep _ IntegerR = arbitrary
+genSizedRep _ (ScriptsNeededR p) = case whichUTxO p of
+  UTxOShelleyToMary -> pure $ ScriptsNeededF p (ShelleyScriptsNeeded Set.empty)
+  UTxOAlonzoToConway -> pure $ ScriptsNeededF p (AlonzoScriptsNeeded [])
+genSizedRep _ (ScriptPurposeR p) = case whichTxCert p of
+  TxCertShelleyToBabbage -> arbitrary
+  TxCertConwayToConway -> arbitrary
+genSizedRep _ (TxBodyR p) =
+  case p of
+    Shelley _ -> pure (TxBodyF p (newTxBody p []))
+    Allegra _ -> pure (TxBodyF p (newTxBody p []))
+    Mary _ -> pure (TxBodyF p (newTxBody p []))
+    Alonzo _ -> pure (TxBodyF p (newTxBody p []))
+    Babbage _ -> pure (TxBodyF p (newTxBody p []))
+    Conway _ -> pure (TxBodyF p (newTxBody p []))
 
 genRep ::
   Era era =>
@@ -751,6 +795,11 @@ shrinkRep PCredR t = shrink t
 shrinkRep ShelleyTxCertR t = shrink t
 shrinkRep ConwayTxCertR t = shrink t
 shrinkRep MIRPotR t = shrink t
+shrinkRep IsValidR _ = []
+shrinkRep IntegerR t = shrink t
+shrinkRep (ScriptsNeededR _) _ = []
+shrinkRep (ScriptPurposeR _) _ = []
+shrinkRep (TxBodyR _) _ = []
 
 -- ===========================
 
@@ -807,15 +856,13 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help FloatR i = pure $ With i
     help TxInR t = pure $ With t
     help CharR s = pure $ With s
-    help (ValueR (Shelley _)) v = pure $ With v
-    help (ValueR (Allegra _)) v = pure $ With v
     help UnitR v = pure $ With v
     help (PairR a b) p = do
       With _ <- help a undefined
       With _ <- help b undefined
       pure $ With p
-    help (ValueR _) _ = failT ["Value does not have Ord instance in post Allegra eras"]
-    help (TxOutR _) _ = failT ["TxOut does not have Ord instance"]
+    help (ValueR _) v = pure $ With v
+    help (TxOutR _) v = pure $ With v
     help (UTxOR _) _ = failT ["UTxO does not have Ord instance"]
     help DeltaCoinR v = pure $ With v
     help GenDelegPairR v = pure $ With v
@@ -836,7 +883,7 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help SizeR v = pure $ With v
     help VCredR v = pure $ With v
     help VHashR v = pure $ With v
-    help MultiAssetR _ = failT ["MultiAsset does not have Ord instance"]
+    help MultiAssetR v = pure $ With v
     help PolicyIDR v = pure $ With v
     help (WitnessesFieldR _) _ = failT ["WitnessesField does not have Ord instance"]
     help AssetNameR v = pure $ With v
@@ -859,12 +906,36 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help ConwayTxCertR _ = failT ["ConwayTxCert does not have Ord instance"]
     help ShelleyTxCertR _ = failT ["ShelleyTxCert does not have Ord instance"]
     help MIRPotR v = pure $ With v
+    help IsValidR _ = failT ["IsValid does not have Ord instance"]
+    help IntegerR i = pure $ With i
+    help (ScriptsNeededR _) _ = failT ["IsValid does not have Ord instance"]
+    help (ScriptPurposeR _) _ = failT ["ScriptPurpose does not have Ord instance"]
+    help (TxBodyR _) _ = failT ["TxBody does not have Ord instance"]
 
 hasEq :: Rep era t -> s t -> Typed (HasConstraint Eq (s t))
 hasEq rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
   where
     help :: Rep era t -> s t -> Typed (HasConstraint Eq (s t))
     help (TxOutR _) v = pure $ With v
+    help (ScriptR _) v = pure $ With v
+    help DataR v = pure $ With v
+    help (ScriptPurposeR p) v = case whichTxCert p of
+      TxCertShelleyToBabbage -> pure $ With v
+      TxCertConwayToConway -> pure $ With v
+    help (PairR a b) v = do
+      With _ <- hasEq a undefined
+      With _ <- hasEq b undefined
+      pure (With v)
     help x v = do
       With y <- hasOrd x v
       pure (With y)
+
+format :: Rep era t -> t -> String
+format rep@(MapR d r) x = show (ppMap (syn d) (syn r) x) ++ synSum rep x
+format rep@(ListR d) x = show (ppList (syn d) x) ++ synSum rep x
+format rep@(SetR d) x = show (ppSet (syn d) x) ++ synSum rep x
+format (MaybeR d) x = show (ppMaybe (syn d) x)
+format r x = synopsis r x
+
+syn :: Rep era t -> t -> PDoc
+syn d x = ppString (format d x)

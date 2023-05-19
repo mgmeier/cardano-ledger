@@ -13,13 +13,13 @@ import Cardano.Ledger.Conway.TxCert (
   ConwayTxCert (..),
   Delegatee (..),
  )
-import Cardano.Ledger.Core (ConstitutionalDelegCert (..))
 import Cardano.Ledger.Credential (Credential (..), StakeCredential)
 import Cardano.Ledger.Era (Era (EraCrypto))
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import Cardano.Ledger.PoolParams (PoolParams (..))
 import Cardano.Ledger.Pretty (ppList)
 import Cardano.Ledger.Shelley.TxCert (
+  GenesisDelegCert (..),
   MIRCert (..),
   MIRPot (..),
   MIRTarget (..),
@@ -80,7 +80,7 @@ sGovern ::
       Hash (HASH (EraCrypto era)) (VerKeyVRF (VRF (EraCrypto era))) ->
       ShelleyTxCert era
     )
-sGovern = Constr "sGovern" (\a b c -> ShelleyTxCertGenesis (ConstitutionalDelegCert a b c))
+sGovern = Constr "sGovern" (\a b c -> ShelleyTxCertGenesisDeleg (GenesisDelegCert a b c))
 
 -- ==========================================
 -- Conway Cert Targets
@@ -130,6 +130,7 @@ cRegPool = Constr "cRegPool" (\x -> ConwayTxCertPool (RegPool x))
 cRetirePool :: Target era (KeyHash 'StakePool (EraCrypto era) -> EpochNo -> ConwayTxCert era)
 cRetirePool = Constr "cRetirePool" (\x e -> ConwayTxCertPool (RetirePool x e))
 
+{-
 cGovern ::
   Target
     era
@@ -139,7 +140,7 @@ cGovern ::
       ConwayTxCert era
     )
 cGovern = Constr "cGovernT" (\a b c -> ConwayTxCertConstitutional (ConstitutionalDelegCert a b c))
-
+-}
 -- =====================================
 
 certsPreds :: forall era. Reflect era => Proof era -> [Pred era]
@@ -151,11 +152,14 @@ certsPreds p = case whichTxCert p of
         (Range 0 5)
         shelleycerts
         [ (sRegKey ^$ stakeCred, [NotMember stakeCred (Dom rewards)])
-        , (sUnRegKey ^$ deregkey, [MapMember deregkey (Lit CoinR (Coin 0)) rewards])
-        , (sDelegStake ^$ stakeCred ^$ poolHash, [Member stakeCred (Dom rewards), Member poolHash (Dom regPools)])
+        , (sUnRegKey ^$ deregkey, [MapMember deregkey (Lit CoinR (Coin 0)) (Left rewards)])
+        ,
+          ( sDelegStake ^$ stakeCred ^$ poolHash
+          , [Member (Left stakeCred) (Dom rewards), Member (Left poolHash) (Dom regPools)]
+          )
         ,
           ( sRetirePool ^$ poolHash ^$ epoch
-          , [Member poolHash (Dom regPools), epoch :<-: (Constr "+" (+) ^$ currentEpoch ^$ epochDelta)]
+          , [Member (Left poolHash) (Dom regPools), epoch :<-: (Constr "+" (+) ^$ currentEpoch ^$ epochDelta)]
           )
         , (sRegPool ^$ poolParams, [Random poolParams])
         ,
@@ -181,28 +185,36 @@ certsPreds p = case whichTxCert p of
         ,
           ( cUnRegKey ^$ stakeCred ^$ mkeydeposit
           ,
-            [ MapMember stakeCred (Lit CoinR (Coin 0)) rewards
-            , Maybe mkeydeposit (idTarget kd) [MapMember stakeCred kd stakeDeposits]
+            [ MapMember stakeCred (Lit CoinR (Coin 0)) (Left rewards)
+            , Maybe mkeydeposit (idTarget kd) [MapMember stakeCred kd (Left stakeDeposits)]
             ]
           )
-        , (cDelegStake ^$ stakeCred ^$ poolHash, [Member stakeCred (Dom rewards), Member poolHash (Dom regPools)])
-        , (cDelegVote ^$ stakeCred ^$ vote, [Member stakeCred (Dom rewards), Member vote voteUniv])
+        ,
+          ( cDelegStake ^$ stakeCred ^$ poolHash
+          , [Member (Left stakeCred) (Dom rewards), Member (Left poolHash) (Dom regPools)]
+          )
+        , (cDelegVote ^$ stakeCred ^$ vote, [Member (Left stakeCred) (Dom rewards), Member (Left vote) voteUniv])
         ,
           ( cRegDelegStake ^$ stakeCred ^$ poolHash ^$ kd
-          , [Member stakeCred (Dom rewards), Member poolHash (Dom regPools), kd :=: (keyDepAmt p)]
+          , [Member (Left stakeCred) (Dom rewards), Member (Left poolHash) (Dom regPools), kd :=: (keyDepAmt p)]
           )
         ,
           ( cRegDelegVote ^$ stakeCred ^$ vote ^$ kd
-          , [Member stakeCred (Dom rewards), Member vote voteUniv, kd :=: (keyDepAmt p)]
+          , [Member (Left stakeCred) (Dom rewards), Member (Left vote) voteUniv, kd :=: (keyDepAmt p)]
           )
         ,
           ( cRegDelegStakeVote ^$ stakeCred ^$ poolHash ^$ vote ^$ kd
-          , [Member stakeCred (Dom rewards), Member vote voteUniv, Member poolHash (Dom regPools), kd :=: (keyDepAmt p)]
+          ,
+            [ Member (Left stakeCred) (Dom rewards)
+            , Member (Left vote) voteUniv
+            , Member (Left poolHash) (Dom regPools)
+            , kd :=: (keyDepAmt p)
+            ]
           )
         , (cRegPool ^$ poolParams, [Random poolParams])
         ,
           ( cRetirePool ^$ poolHash ^$ epoch
-          , [Member poolHash (Dom regPools), epoch :<-: (Constr "+" (+) ^$ currentEpoch ^$ epochDelta)]
+          , [Member (Left poolHash) (Dom regPools), epoch :<-: (Constr "+" (+) ^$ currentEpoch ^$ epochDelta)]
           )
         ]
     ]

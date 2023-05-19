@@ -144,7 +144,7 @@ instance Specification Size Int where
   genFromS _ _ _ = genFromSize
 
 instance
-  (Era era, Ord dom {- HasRep dom, HasRep rng, HasRep c, -}, Adds rng) =>
+  (Era era, Ord dom {- HasRep dom, HasRep rng, HasRep c, -}, Ord rng, Adds rng) =>
   Specification (MapSpec era dom rng) (Map dom rng)
   where
   type Count (MapSpec era dom rng) = Int
@@ -183,7 +183,7 @@ instance
   genFromS msgs count g spec = genFromRelSpec msgs g count spec
 
 instance
-  (Era era, Adds rng) =>
+  (Era era, Adds rng, Ord rng) =>
   Specification (RngSpec era rng) [rng]
   where
   type Count (RngSpec era rng) = Int

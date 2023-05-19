@@ -33,6 +33,7 @@ import Cardano.Ledger.BaseTypes (
  )
 
 import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), dataToBinaryData, hashData)
+import Cardano.Ledger.Alonzo.Tx (IsValid (..))
 import Cardano.Ledger.Alonzo.TxOut (AlonzoTxOut (..))
 import Cardano.Ledger.Babbage.TxOut (BabbageTxOut (..))
 import Cardano.Ledger.Coin (Coin (..))
@@ -57,6 +58,7 @@ import Cardano.Ledger.Mary.Value (
  )
 import Cardano.Ledger.Pretty (ppList)
 import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
+import Cardano.Ledger.Val (Val (inject))
 import qualified Data.List as List
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -65,7 +67,7 @@ import qualified Data.Set as Set
 import Data.String (IsString (..))
 import Test.Cardano.Ledger.Constrained.Combinators (genFromMap, itemFromSet, mapSized, setSized)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
-import Test.Cardano.Ledger.Constrained.Scripts (genCoreScript)
+import Test.Cardano.Ledger.Constrained.Scripts (allPlutusScripts, genCoreScript, spendPlutusScripts)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import Test.Cardano.Ledger.Generic.PrettyCore (pcMultiAsset)
 
@@ -201,8 +203,8 @@ item' :: Term era t -> t -> SubItem era
 item' (Var (V name rep _)) t = SubItem (V name rep No) (Lit rep t)
 item' term _ = error ("item' applied to non Var Term: " ++ show term)
 
-scriptWits ::
-  Cardano.Ledger.Core.EraScript era =>
+makeHashScriptMap ::
+  Reflect era =>
   Proof era ->
   Int ->
   Scripts.Tag ->
@@ -211,8 +213,15 @@ scriptWits ::
     (KeyPair 'Witness (EraCrypto era)) ->
   ValidityInterval ->
   Gen (Map (ScriptHash (EraCrypto era)) (ScriptF era))
-scriptWits p size tag m vi = do
-  scs <- vectorOf size (genCoreScript p tag m vi)
+makeHashScriptMap p size tag m vi = do
+  let genOne Scripts.Spend =
+        -- Make an effort to get as many plutus scripts as possible
+        oneof
+          [ (snd . snd) <$> genFromMap [] (spendPlutusScripts p)
+          , genCoreScript p Scripts.Spend m vi
+          ]
+      genOne t = genCoreScript p t m vi
+  scs <- vectorOf size (genOne tag)
   pure $ Map.fromList $ map (\x -> (hashScript x, ScriptF p x)) scs
 
 dataWits ::
@@ -265,8 +274,8 @@ initUniv p = do
   let slotno = (lower + 3)
   upper <- choose (slotno + 1, slotno + 6)
   let validityinterval = ValidityInterval (SJust (SlotNo lower)) (SJust (SlotNo upper))
-  spendscriptuniv <- scriptWits p 50 Scripts.Spend keymapuniv validityinterval
-  scriptuniv <- scriptWits p 50 Scripts.Cert keymapuniv validityinterval
+  spendscriptuniv <- makeHashScriptMap p 30 Scripts.Spend keymapuniv validityinterval
+  scriptuniv <- makeHashScriptMap p 30 Scripts.Cert keymapuniv validityinterval
   multiassetuniv <- (vectorOf 50 (multiAsset scriptuniv)) :: Gen [MultiAsset (EraCrypto era)]
   datauniv <- dataWits p 30
   datumsuniv <- genDatums 30 datauniv
@@ -279,7 +288,7 @@ initUniv p = do
           , KeyHashObj . coerceKeyRole . fst <$> genFromMap ["From init, creduniv, KeyHashObj"] keymapuniv
           ]
       )
-  spendcreduniv <-
+  spendcreduniv <- -- For use in Payment part of Addr, Plutus scripts take a redeemer
     setSized
       ["From init creduniv"]
       50
@@ -290,8 +299,11 @@ initUniv p = do
       )
   networkv <- arbitrary
   ptruniv <- setSized ["From init ptruniv"] 30 (genPtr (SlotNo slotno))
-  addruniv <- setSized ["From init addruniv"] 30 (genAddrWith networkv spendcreduniv ptruniv creduniv)
+  addruniv <- setSized ["From init addruniv"] 40 (genAddrWith networkv spendcreduniv ptruniv creduniv)
+  colltxoutuniv <- setSized ["From init colTxoutUniv"] 10 (colTxOutT p (Set.filter (noScripts p) addruniv))
   txoutsuniv <- genTxOuts p addruniv scriptuniv spendscriptuniv datauniv
+  bigcoin <- pure (Coin 2000000)
+  feetxout <- txOutT p <$> pick1 [] (Set.filter (noScripts p) addruniv) <*> pure bigcoin
 
   pure
     [ item' poolHashUniv poolsuniv
@@ -301,7 +313,7 @@ initUniv p = do
     , item' currentSlot (SlotNo slotno)
     , item' validityInterval validityinterval
     , item' (spendscriptUniv p) spendscriptuniv
-    , item' (scriptUniv p) scriptuniv
+    , item' (nonSpendScriptUniv p) scriptuniv
     , item' dataUniv datauniv
     , item' datumsUniv datumsuniv
     , item' credsUniv creduniv
@@ -314,8 +326,25 @@ initUniv p = do
     , item' ptrUniv ptruniv
     , item' addrUniv addruniv
     , item' multiAssetUniv multiassetuniv
-    , item' (txoutUniv p) txoutsuniv
+    , item' (txoutUniv p) (Set.insert feetxout (Set.union colltxoutuniv (Set.fromList txoutsuniv)))
+    , item' bigCoin bigcoin
+    , item' feeTxOut feetxout
+    , item' (colTxoutUniv p) colltxoutuniv
     ]
+
+noScripts :: Proof era -> Addr (EraCrypto era) -> Bool
+noScripts _ (Addr _ (ScriptHashObj _) _) = False
+noScripts _ (Addr _ _ (StakeRefBase (ScriptHashObj _))) = False
+noScripts _ (AddrBootstrap _) = False
+noScripts _ _ = True
+
+txOutT :: Reflect era => Proof era -> Addr (EraCrypto era) -> Coin -> TxOutF era
+txOutT p x c = TxOutF p (mkBasicTxOut x (inject c))
+
+-- | The collateral consists only of VKey addresses
+--   and the collateral outputs in the UTxO do not contain any non-ADA part
+colTxOutT :: EraTxOut era => Proof era -> Set (Addr (EraCrypto era)) -> Gen (TxOutF era)
+colTxOutT p noScriptAddr = TxOutF p <$> (mkBasicTxOut <$> pick1 [] noScriptAddr <*> (inject <$> noZeroCoin))
 
 -- ======================================================================
 -- Reusable Targets. First order representations of functions for use in
@@ -350,21 +379,25 @@ addrUnivT ::
   Term era (Set (Credential 'Staking c)) ->
   Target era (Gen (Set (Addr c)))
 addrUnivT net ps pts cs =
-  Constr "" (setSized ["From addrUnivT"] 30)
+  Constr "" (setSized ["From addrUnivT"] 40)
     :$ (Constr "genAddrWith" genAddrWith ^$ net ^$ ps ^$ pts ^$ cs)
 
 -- =================================================================
 -- Using constraints to generate the Universes
 
-scriptWitsT ::
+makeHashScriptMapT ::
   Proof era ->
   Int ->
   Scripts.Tag ->
   Term era (Map (KeyHash 'Witness (EraCrypto era)) (KeyPair 'Witness (EraCrypto era))) ->
   Term era ValidityInterval ->
   Target era (Gen (Map (ScriptHash (EraCrypto era)) (ScriptF era)))
-scriptWitsT p size tag m vi =
-  Constr "scriptWits" (unReflect scriptWits p size tag) ^$ m ^$ vi
+makeHashScriptMapT p size tag m vi =
+  Constr
+    "makeHashScriptMap"
+    (unReflect makeHashScriptMap p size tag)
+    ^$ m
+    ^$ vi
 
 universePreds :: Reflect era => Proof era -> [Pred era]
 universePreds p =
@@ -376,33 +409,75 @@ universePreds p =
   , Sized (ExactSize 10) voteHashUniv
   , Sized (ExactSize 30) keymapUniv
   , Sized (ExactSize 40) txinUniv
+  , Member (Right feeTxIn) txinUniv
   , validityInterval :<-: makeValidityT beginSlotDelta currentSlot endSlotDelta
   , Choose
       (ExactSize 30)
       credList
-      [ (scriptHashObjT scripthash, [Member scripthash (Dom (scriptUniv p))])
-      , (keyHashObjT keyhash, [Member keyhash (Dom keymapUniv)])
+      [ (scriptHashObjT scripthash, [Member (Left scripthash) (Dom (nonSpendScriptUniv p))])
+      , (keyHashObjT keyhash, [Member (Left keyhash) (Dom keymapUniv)])
       ]
   , credsUniv :<-: listToSetTarget credList
+  , GenFrom (spendscriptUniv p) (makeHashScriptMapT p 25 Scripts.Spend keymapUniv validityInterval)
+  , GenFrom (nonSpendScriptUniv p) (makeHashScriptMapT p 25 Scripts.Cert keymapUniv validityInterval)
+  , allScriptUniv p :<-: (Constr "union" Map.union ^$ (spendscriptUniv p) ^$ (nonSpendScriptUniv p))
   , Choose
       (ExactSize 50)
       spendcredList
-      [ (scriptHashObjT scripthash, [Member scripthash (Dom (spendscriptUniv p))])
-      , (keyHashObjT keyhash, [Member keyhash (Dom keymapUniv)])
+      [ (scriptHashObjT scripthash, [Member (Left scripthash) (Dom (spendscriptUniv p))])
+      , (scriptHashObjT scripthash, [Member (Left scripthash) (Dom (spendscriptUniv p))])
+      , (scriptHashObjT scripthash, [Member (Left scripthash) (Dom (spendscriptUniv p))])
+      , (scriptHashObjT scripthash, [Member (Left scripthash) (Dom (spendscriptUniv p))])
+      , (keyHashObjT keyhash, [Member (Left keyhash) (Dom keymapUniv)])
       ]
   , spendCredsUniv :<-: listToSetTarget spendcredList
   , currentEpoch :<-: (Constr "epochFromSlotNo" epochFromSlotNo ^$ currentSlot)
-  , GenFrom (spendscriptUniv p) (scriptWitsT p 50 Scripts.Spend keymapUniv validityInterval)
-  , GenFrom (scriptUniv p) (scriptWitsT p 40 Scripts.Cert keymapUniv validityInterval)
   , GenFrom dataUniv (Constr "dataWits" (dataWits p) ^$ (Lit IntR 30))
   , GenFrom datumsUniv (Constr "genDatums" (genDatums 30) ^$ dataUniv)
   , GenFrom network (constTarget arbitrary) -- Choose Testnet or Mainnet
   , GenFrom ptrUniv (ptrUnivT currentSlot)
   , GenFrom addrUniv (addrUnivT network spendCredsUniv ptrUniv credsUniv)
-  , GenFrom multiAssetUniv (Constr "multiAsset" (vectorOf 50 . multiAsset) ^$ (scriptUniv p))
-  , GenFrom (txoutUniv p) (Constr "genTxOuts" (genTxOuts p) ^$ addrUniv ^$ (scriptUniv p) ^$ (spendscriptUniv p) ^$ dataUniv)
+  , GenFrom multiAssetUniv (Constr "multiAsset" (vectorOf 50 . multiAsset) ^$ (nonSpendScriptUniv p))
+  , GenFrom
+      preTxoutUniv
+      ( Constr "genTxOuts" (genTxOuts p)
+          ^$ addrUniv
+          ^$ (nonSpendScriptUniv p)
+          ^$ (spendscriptUniv p)
+          ^$ dataUniv
+      )
+  , GenFrom
+      (colTxoutUniv p)
+      ( Constr
+          "colTxOutUniv"
+          (\x -> setSized ["From init colTxoutUniv"] 20 (colTxOutT p (Set.filter (noScripts p) x)))
+          ^$ addrUniv
+      )
   , payUniv :=: spendCredsUniv
   , voteUniv :<-: (Constr "coerce" (Set.map stakeToVote) ^$ credsUniv)
+  , bigCoin :<-: constTarget (Coin 2000000)
+  , GenFrom
+      feeTxOut
+      ( Constr
+          "txout"
+          ( \a c ->
+              txOutT p
+                <$> pick1 [] (Set.filter (noScripts p) a)
+                <*> pure c
+          )
+          ^$ addrUniv
+          ^$ bigCoin
+      )
+  , txoutUniv p
+      :<-: ( Constr
+              "insert"
+              (\x y _z -> Set.insert x {- (Set.union z -} (Set.fromList y)) -- )
+              ^$ feeTxOut
+              ^$ preTxoutUniv
+              ^$ (colTxoutUniv p)
+           )
+  , plutusUniv :<-: constTarget (Map.map (\(x, y) -> (x, ScriptF p y)) (allPlutusScripts p))
+  , spendPlutusUniv :<-: constTarget (Map.map (\(x, y) -> (x, ScriptF p y)) (spendPlutusScripts p))
   ]
   where
     endSlotDelta = Var (V "endSlot.Delta" SlotNoR No)
@@ -411,6 +486,10 @@ universePreds p =
     spendcredList = Var (V "spendcred.list" (ListR PCredR) No)
     keyhash = Var (V "keyhash" WitHashR No)
     scripthash = Var (V "scripthash" ScriptHashR No)
+    preTxoutUniv = Var (V "preTxoutUniv" (ListR (TxOutR p)) No)
+
+zzz :: IsValid
+zzz = IsValid True
 
 stakeToVote :: Credential 'Staking c -> Credential 'Voting c
 stakeToVote = coerceKeyRole

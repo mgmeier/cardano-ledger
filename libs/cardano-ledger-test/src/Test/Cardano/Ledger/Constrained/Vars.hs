@@ -10,7 +10,7 @@ module Test.Cardano.Ledger.Constrained.Vars where
 
 import Cardano.Ledger.Address (Addr (..), RewardAcnt (..), Withdrawals (..))
 import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
-import Cardano.Ledger.Alonzo.Core (ppPricesL)
+import Cardano.Ledger.Alonzo.Core (AlonzoEraPParams (..), ppCollateralPercentageL, ppMaxTxExUnitsL, ppPricesL)
 import Cardano.Ledger.BaseTypes (BlocksMade (..), EpochNo, Network (..), ProtVer (..), SlotNo (..), StrictMaybe (..))
 import Cardano.Ledger.CertState (CertState (..), DState (..), FutureGenDeleg (..), PState (..), VState (..))
 import qualified Cardano.Ledger.CertState as DPS (InstantaneousRewards (..))
@@ -50,9 +50,21 @@ import Cardano.Ledger.Shelley.LedgerState (
  )
 import Cardano.Ledger.Shelley.TxCert (TxCert)
 
+import Cardano.Ledger.Alonzo.Scripts (ExUnits (..), Prices (..), Tag (..))
+import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..))
+import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptIntegrity (..), ScriptPurpose (..))
+import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..), Redeemers (..), TxDats (..))
 import Cardano.Ledger.Conway.Governance (ConwayTallyState (..))
 import Cardano.Ledger.Core (PParamsHKD)
-import Cardano.Ledger.Mary.Value (MultiAsset (..))
+import Cardano.Ledger.Crypto (Crypto)
+import Cardano.Ledger.Hashes (DataHash, ScriptHash)
+import Cardano.Ledger.Mary.Value (
+  AssetName (..),
+  MaryValue (..),
+  MultiAsset (..),
+  PolicyID (..),
+  multiAssetFromList,
+ )
 import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
 import qualified Cardano.Ledger.Shelley.Governance as Core (GovernanceState (..))
 import Cardano.Ledger.Shelley.PParams (ProposedPPUpdates (..))
@@ -68,6 +80,7 @@ import Cardano.Ledger.Val (Val (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.VMap as VMap
 import Lens.Micro
 import Numeric.Natural (Natural)
@@ -78,6 +91,7 @@ import Test.Cardano.Ledger.Constrained.Classes (
   PParamsF (..),
   PParamsUpdateF (..),
   ScriptF (..),
+  ScriptsNeededF (..),
   TxCertF (..),
   TxOutF (..),
   ValueF (..),
@@ -94,21 +108,11 @@ import Test.Cardano.Ledger.Constrained.Lenses
 import Test.Cardano.Ledger.Constrained.TypeRep (Rep (..), testEql, (:~:) (Refl))
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import Test.Cardano.Ledger.Generic.Fields (TxBodyField (..))
-import Test.Cardano.Ledger.Generic.Proof (Evidence (..), Proof (..), Reflect (..), ValueWit (..), whichValue)
+import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Generic.Updaters (newTxBody)
 
-import Cardano.Ledger.Alonzo.Scripts (ExUnits (..), Prices (..), Tag (..))
-import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..))
-import Cardano.Ledger.Alonzo.Tx (ScriptIntegrity (..))
-import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..), Redeemers (..), TxDats (..))
-import Cardano.Ledger.Hashes (DataHash, ScriptHash)
-import Cardano.Ledger.Mary.Value (
-  AssetName (..),
-  MaryValue (..),
-  MultiAsset (..),
-  PolicyID (..),
-  multiAssetFromList,
- )
+import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..))
+import Cardano.Ledger.Shelley.UTxO (EraUTxO (..), ShelleyScriptsNeeded (..))
 
 -- ================================================================
 
@@ -599,8 +603,12 @@ spendscriptUniv :: Proof era -> Term era (Map (ScriptHash (EraCrypto era)) (Scri
 spendscriptUniv p = Var (V "spendscriptUniv" (MapR ScriptHashR (ScriptR p)) No)
 
 -- | The universe of Scripts (and their hashes) useable in contexts other than Spending
-scriptUniv :: Proof era -> Term era (Map (ScriptHash (EraCrypto era)) (ScriptF era))
-scriptUniv p = Var (V "scriptUniv" (MapR ScriptHashR (ScriptR p)) No)
+nonSpendScriptUniv :: Proof era -> Term era (Map (ScriptHash (EraCrypto era)) (ScriptF era))
+nonSpendScriptUniv p = Var (V "nonSpendScriptUniv" (MapR ScriptHashR (ScriptR p)) No)
+
+-- | The union of 'spendscriptUniv' and 'nonSpendScriptUniv'. All possible scripts in any context
+allScriptUniv :: Proof era -> Term era (Map (ScriptHash (EraCrypto era)) (ScriptF era))
+allScriptUniv p = Var (V "allScriptUniv" (MapR ScriptHashR (ScriptR p)) No)
 
 -- | The universe of Data (and their hashes)
 dataUniv :: Era era => Term era (Map (DataHash (EraCrypto era)) (Data era))
@@ -623,13 +631,41 @@ voteHashUniv = Var $ V "voteHashUniv" (SetR VHashR) No
 txinUniv :: Term era (Set (TxIn (EraCrypto era)))
 txinUniv = Var $ V "txinUniv" (SetR TxInR) No
 
-txoutUniv :: Proof era -> Term era [TxOutF era]
-txoutUniv p = Var $ V "txoutUniv" (ListR (TxOutR p)) No
+-- | The universe of TxOuts.
+--   It contains 'colTxoutUniv' as a sublist and 'feeOutput' as an element
+--   See also 'feeOutput' which is defined by the universes, and is related.
+txoutUniv :: Proof era -> Term era (Set (TxOutF era))
+txoutUniv p = Var (V "txoutUniv" (SetR (TxOutR p)) No)
+
+-- | The universe of TxOuts useable for collateral
+--   The collateral TxOuts consists only of VKey addresses
+--   and The collateral TxOuts do not contain any non-ADA part
+colTxoutUniv :: Proof era -> Term era (Set (TxOutF era))
+colTxoutUniv p = Var (V "colTxoutUniv" (SetR (TxOutR p)) No)
+
+-- | A TxOut, guaranteed to have
+--   1) no scripts in its Addr, and
+--   2) It's Addr is in the addrUniv
+--   3) 'bigCoin' is stored in the Addr Value, and
+--   4) the Addr Value has empty MutiAssets
+--   5) be a member of the txoutUniv
+feeTxOut :: Reflect era => Term era (TxOutF era)
+feeTxOut = Var (V "feeTxOut" (TxOutR reify) No)
+
+-- | A TxIn, guaranteed to have
+--  1) be a member of the txinUniv
+feeTxIn :: Term era (TxIn (EraCrypto era))
+feeTxIn = Var (V "feeTxIn" TxInR No)
+
+-- | A Coin large enough to pay almost any fee.
+--   See also 'feeOutput' which is related.
+bigCoin :: Term era Coin
+bigCoin = Var (V "bigCoin" CoinR No)
 
 datumsUniv :: Era era => Term era [Datum era]
 datumsUniv = Var (V "datumsUniv" (ListR DatumR) No)
 
-multiAssetUniv :: Term era [MultiAsset (EraCrypto era)]
+multiAssetUniv :: Era era => Term era [MultiAsset (EraCrypto era)]
 multiAssetUniv = Var (V "multiAssetUniv" (ListR MultiAssetR) No)
 
 -- | The universe of key hashes, and the signing and validating key pairs they represent.
@@ -649,6 +685,12 @@ addrUniv = Var $ V "addrUniv" (SetR AddrR) No
 
 ptrUniv :: Term era (Set Ptr)
 ptrUniv = Var $ V "ptrUniv" (SetR PtrR) No
+
+plutusUniv :: Reflect era => Term era (Map (ScriptHash (EraCrypto era)) (IsValid, ScriptF era))
+plutusUniv = Var $ V "plutusUniv" (MapR ScriptHashR (PairR IsValidR (ScriptR reify))) No
+
+spendPlutusUniv :: Reflect era => Term era (Map (ScriptHash (EraCrypto era)) (IsValid, ScriptF era))
+spendPlutusUniv = Var $ V "spendPlutusUniv" (MapR ScriptHashR (PairR IsValidR (ScriptR reify))) No
 
 -- ====================================================================
 -- Targets for sub types of NewEpochState
@@ -894,6 +936,22 @@ keyDepAmt p =
       CoinR
       (Yes (PParamsR p) (withEraPParams p (pparamsWrapperL . ppKeyDepositL)))
 
+maxTxExUnits :: AlonzoEraPParams era => Proof era -> Term era ExUnits
+maxTxExUnits p =
+  Var $
+    V
+      "maxTxExUnits"
+      ExUnitsR
+      (Yes (PParamsR p) (withEraPParams p (pparamsWrapperL . ppMaxTxExUnitsL)))
+
+collateralPercentage :: AlonzoEraPParams era => Proof era -> Term era Natural
+collateralPercentage p =
+  Var $
+    V
+      "collateralPercentage"
+      NaturalR
+      (Yes (PParamsR p) (withEraPParams p (pparamsWrapperL . ppCollateralPercentageL)))
+
 -- =================================================================
 -- TxBody vars
 
@@ -930,8 +988,12 @@ ttl = Var $ V "ttl" SlotNoR No
 validityInterval :: Term era ValidityInterval
 validityInterval = Var $ V "validityInterval" ValidityIntervalR No
 
-mint :: Term era (MultiAsset (EraCrypto era))
-mint = Var $ V "mint" MultiAssetR No
+mint :: Term era (Map (ScriptHash (EraCrypto era)) (Map AssetName Integer))
+mint = Var $ V "mint" (MapR ScriptHashR (MapR AssetNameR IntegerR)) No
+
+-- | lift the model type of 'mint' into a MultiAsset
+liftMultiAsset :: Map (ScriptHash c) (Map AssetName Integer) -> MultiAsset c
+liftMultiAsset m = MultiAsset (Map.mapKeys PolicyID m)
 
 reqSignerHashes :: Term era (Set (KeyHash 'Witness (EraCrypto era)))
 reqSignerHashes = Var $ V "reqSignerHashes" (SetR WitHashR) No
@@ -944,6 +1006,25 @@ redeemers = Var $ V "redeemers" (MapR RdmrPtrR (PairR DataR ExUnitsR)) No
 
 txdats :: Reflect era => Term era (Map (DataHash (EraCrypto era)) (Data era))
 txdats = Var $ V "txdats" (MapR DataHashR DataR) No
+
+scriptsNeeded :: Reflect era => Term era (ScriptsNeededF era)
+scriptsNeeded = Var $ V "scriptsNeeded" (ScriptsNeededR reify) No
+
+smNeededL ::
+  (ScriptsNeeded era ~ ShelleyScriptsNeeded era) =>
+  Lens' (ScriptsNeededF era) (Set (ScriptHash (EraCrypto era)))
+smNeededL =
+  lens
+    (\(ScriptsNeededF _ (ShelleyScriptsNeeded s)) -> s)
+    (\(ScriptsNeededF p _) s -> ScriptsNeededF p (ShelleyScriptsNeeded s))
+
+acNeededL ::
+  (ScriptsNeeded era ~ AlonzoScriptsNeeded era) =>
+  Lens' (ScriptsNeededF era) [(ScriptPurpose era, ScriptHash (EraCrypto era))]
+acNeededL =
+  lens
+    (\(ScriptsNeededF _ (AlonzoScriptsNeeded s)) -> s)
+    (\(ScriptsNeededF p _) s -> ScriptsNeededF p (AlonzoScriptsNeeded s))
 
 -- ==============================================================
 -- Terms and Fields for use in TxOut and TxBody
@@ -1024,3 +1105,6 @@ txoutAmountF = Field "txoutAmount" (ValueR reify) (TxOutR reify) (txOutFL . valu
 
 txoutAmount :: Reflect era => Term era (ValueF era)
 txoutAmount = fieldToTerm txoutAmountF
+
+scriptWits :: Reflect era => Term era (Map (ScriptHash (EraCrypto era)) (ScriptF era))
+scriptWits = Var $ V "scriptWits" (MapR ScriptHashR (ScriptR reify)) No

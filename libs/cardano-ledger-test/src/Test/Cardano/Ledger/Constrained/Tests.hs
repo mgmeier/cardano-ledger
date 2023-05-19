@@ -40,7 +40,7 @@ import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Monad
 import Test.Cardano.Ledger.Constrained.Rewrite
 import Test.Cardano.Ledger.Constrained.Shrink
-import Test.Cardano.Ledger.Constrained.Size (OrdCond (..), Size (SzRng), runOrdCond)
+import Test.Cardano.Ledger.Constrained.Size (OrdCond (..), Size (SzRng))
 import Test.Cardano.Ledger.Constrained.Solver
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Generic.Proof (Standard)
@@ -297,13 +297,13 @@ genFromOrdCond cond canBeNegative n =
   suchThatErr
     ["genFromOrdCond " ++ show cond ++ " " ++ show n]
     ( frequency $
-        [(1, pure $ minus ["genFromOrdCond"] n (fromI [] 1)) | n > zero || canBeNegative]
+        [(1, pure $ minus ["genFromOrdCond"] n (fromI [] 1)) | runOrdCondition GTH n zero || canBeNegative]
           ++ [ (1, pure n)
              , (1, pure $ add n (fromI [] 1))
              , (10, arbitrary)
              ]
     )
-    (flip (runOrdCond cond) n)
+    (flip (runOrdCondition cond) n)
 
 genPredicate :: forall era. Era era => GenEnv era -> Gen (Pred era, GenEnv era)
 genPredicate env =
@@ -460,7 +460,7 @@ genPredicate env =
           genTerm'
             env'
             rep
-            (flip (runOrdCond cmp) tot)
+            (flip (runOrdCondition cmp) tot)
             (genFromOrdCond cmp canBeNegative tot)
             (VarTerm d)
         small <- genSmall @c
@@ -639,6 +639,7 @@ predConstr Choose {} = "Choose"
 predConstr Maybe {} = "Maybe"
 predConstr GenFrom {} = "GenFrom"
 predConstr ForEach {} = "ForEach"
+predConstr SubMap {} = "SubMap"
 
 constraintProperty :: Maybe Int -> Bool -> [String] -> OrderInfo -> ([Pred TestEra] -> DependGraph TestEra -> Env TestEra -> Property) -> Property
 constraintProperty timeout strict whitelist info prop =

@@ -54,10 +54,12 @@ module Test.Cardano.Ledger.Generic.Proof (
   TxOutWit (..),
   TxCertWit (..),
   PParamsWit (..),
+  UTxOWit (..),
   whichValue,
   whichTxOut,
   whichTxCert,
   whichPParams,
+  whichUTxO,
 ) where
 
 import Cardano.Crypto.DSIGN as DSIGN
@@ -69,6 +71,7 @@ import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.Alonzo.Core (AlonzoEraPParams)
 import Cardano.Ledger.Alonzo.TxOut (AlonzoEraTxOut (..), AlonzoTxOut (..))
+import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded)
 import Cardano.Ledger.Babbage (BabbageEra)
 import Cardano.Ledger.Babbage.Core (BabbageEraPParams)
 import Cardano.Ledger.Babbage.TxOut (BabbageEraTxOut (..), BabbageTxOut (..))
@@ -81,12 +84,14 @@ import Cardano.Ledger.Core (Era (EraCrypto), EraPParams, EraRule, EraTx, EraTxOu
 import Cardano.Ledger.Crypto (Crypto, DSIGN, HASH, KES, StandardCrypto, VRF)
 import Cardano.Ledger.Keys (DSignable)
 import Cardano.Ledger.Mary (MaryEra)
+import Cardano.Ledger.Mary.Core (MaryEraTxBody)
 import Cardano.Ledger.Mary.Value (MaryValue)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Ledger.Shelley.Core (EraGovernance, EraIndependentTxBody, ShelleyEraTxCert)
 import Cardano.Ledger.Shelley.TxCert (ShelleyTxCert)
 import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
-import Cardano.Ledger.UTxO (EraUTxO (..))
+import Cardano.Ledger.Shelley.UTxO (ShelleyScriptsNeeded)
+import Cardano.Ledger.UTxO (EraUTxO (..), ScriptsNeeded)
 import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Cardano.Protocol.TPraos.BHeader (BHBody)
 import Cardano.Protocol.TPraos.OCert
@@ -438,3 +443,22 @@ whichPParams (Mary _) = PParamsShelleyToMary
 whichPParams (Alonzo _) = PParamsAlonzoToAlonzo
 whichPParams (Babbage _) = PParamsBabbageToConway
 whichPParams (Conway _) = PParamsBabbageToConway
+
+data UTxOWit era where
+  UTxOShelleyToMary :: (EraUTxO era, ScriptsNeeded era ~ ShelleyScriptsNeeded era) => UTxOWit era
+  UTxOAlonzoToConway ::
+    ( EraUTxO era
+    , MaryEraTxBody era
+    , AlonzoEraPParams era
+    , AlonzoEraTxOut era
+    , ScriptsNeeded era ~ AlonzoScriptsNeeded era
+    ) =>
+    UTxOWit era
+
+whichUTxO :: Proof era -> UTxOWit era
+whichUTxO (Shelley _) = UTxOShelleyToMary
+whichUTxO (Allegra _) = UTxOShelleyToMary
+whichUTxO (Mary _) = UTxOShelleyToMary
+whichUTxO (Alonzo _) = UTxOAlonzoToConway
+whichUTxO (Babbage _) = UTxOAlonzoToConway
+whichUTxO (Conway _) = UTxOAlonzoToConway
