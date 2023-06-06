@@ -92,17 +92,17 @@ ifTrace traceOn message a = case traceOn of
 -- ==================================================
 -- Computing if a type has instances
 
-
 -- ============ Adds ==============
 
 -- | Is there an Adds instance for 't'
 hasAdds :: Rep era t -> (s t) -> Typed (HasConstraint Adds (s t))
-hasAdds IntR x = pure $ With x
+hasAdds ExUnitsR x = pure $ With x
 hasAdds Word64R x = pure $ With x
+hasAdds IntR x = pure $ With x
+hasAdds NaturalR x = pure $ With x
+hasAdds RationalR x = pure $ With x
 hasAdds CoinR x = pure $ With x
 hasAdds DeltaCoinR x = pure $ With x
-hasAdds RationalR x = pure $ With x
-hasAdds NaturalR x = pure $ With x
 hasAdds r _ = failT [show r ++ " does not have Adds instance."]
 
 isAddsType :: forall era t. Rep era t -> Bool

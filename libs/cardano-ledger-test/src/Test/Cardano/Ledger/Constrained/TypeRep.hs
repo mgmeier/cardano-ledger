@@ -36,41 +36,64 @@ module Test.Cardano.Ledger.Constrained.TypeRep (
   hasOrd,
   hasEq,
   format,
+  genSigningKey,
 )
 where
 
 import Cardano.Ledger.Address (Addr (..), RewardAcnt (..))
 import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
+import Cardano.Ledger.Language (Language (..))
+
+-- import Cardano.Ledger.Alonzo.Core (ScriptIntegrityHash)
+
+import Cardano.Crypto.Signing (SigningKey (..), shortVerificationKeyHexF, toVerification)
+import qualified Cardano.Crypto.Wallet as Byron
 import Cardano.Ledger.Alonzo.Scripts (ExUnits (..), Tag)
 import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), dataToBinaryData)
+import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptPurpose (..))
 import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..))
+import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..))
+import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..))
 import Cardano.Ledger.BaseTypes (EpochNo (..), Network (..), ProtVer (..), SlotNo (..), mkTxIxPartial)
 import Cardano.Ledger.Binary.Version (Version)
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
+import Cardano.Ledger.Conway.Governance (GovernanceProcedure (..))
+import Cardano.Ledger.Conway.TxCert (ConwayTxCert (..))
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Credential (Credential, Ptr)
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.EpochBoundary (SnapShots (..))
 import Cardano.Ledger.Era (Era (EraCrypto))
-import Cardano.Ledger.Hashes (DataHash, ScriptHash (..))
+import Cardano.Ledger.Hashes (DataHash, EraIndependentScriptIntegrity, ScriptHash (..))
 import Cardano.Ledger.Keys (GenDelegPair (..), KeyHash, KeyRole (..))
+import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness (..))
 import Cardano.Ledger.Mary.Value (AssetName (..), MultiAsset (..), PolicyID (..))
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import Cardano.Ledger.PoolParams (PoolParams (ppId))
-import Cardano.Ledger.Pretty (PDoc, ppInteger, ppList, ppMap, ppMaybe, ppRecord', ppSet, ppString)
+import Cardano.Ledger.Pretty (
+  PDoc,
+  ppHash,
+  ppInteger,
+  ppList,
+  ppMap,
+  ppMaybe,
+  ppRecord',
+  ppSet,
+  ppString,
+  ppVKey,
+ )
 import Cardano.Ledger.Pretty.Alonzo (ppRdmrPtr)
 import Cardano.Ledger.Pretty.Mary (ppValidityInterval)
-
-import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptPurpose (..))
-import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..))
-import Cardano.Ledger.Conway.TxCert (ConwayTxCert (..))
+import Cardano.Ledger.SafeHash (SafeHash, extractHash)
 import Cardano.Ledger.Shelley.LedgerState
 import Cardano.Ledger.Shelley.Rewards (Reward (..))
+import Cardano.Ledger.Shelley.TxBody (WitVKey (..))
 import Cardano.Ledger.Shelley.TxCert (MIRPot (..), ShelleyTxCert (..))
 import Cardano.Ledger.Shelley.UTxO (ShelleyScriptsNeeded (..))
 import Cardano.Ledger.TxIn (TxIn (..))
 import Cardano.Ledger.UTxO (UTxO (..))
 import Cardano.Ledger.Val (Val ((<+>)))
+import Data.ByteString (ByteString)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -79,9 +102,11 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Universe (Eql, Shape (..), Shaped (..), Singleton (..), cmpIndex, (:~:) (Refl))
 import Data.Word (Word16, Word64)
+import Formatting (formatToString)
 import Lens.Micro
 import Numeric.Natural (Natural)
 import Prettyprinter (hsep)
+import Test.Cardano.Ledger.Alonzo.Arbitrary ()
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import Test.Cardano.Ledger.Constrained.Classes (
@@ -89,13 +114,17 @@ import Test.Cardano.Ledger.Constrained.Classes (
   PParamsUpdateF (..),
   ScriptF (..),
   ScriptsNeededF (..),
+  TxAuxDataF (..),
   TxBodyF (..),
   TxCertF (..),
+  TxF (..),
   TxOutF (..),
+  TxWitsF (..),
   ValueF (..),
   genPParams,
   genPParamsUpdate,
   genScriptF,
+  genTxAuxDataF,
   genTxOut,
   genUTxO,
   genValue,
@@ -123,6 +152,7 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcFutureGenDeleg,
   pcGenDelegPair,
   pcIndividualPoolStake,
+  pcMultiAsset,
   pcPParamsSynopsis,
   pcReward,
   pcRewardAcnt,
@@ -133,7 +163,10 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcTxIn,
   pcTxOut,
   pcVal,
+  pcWitVKey,
+  pcWitnesses,
   pcWitnessesField,
+  trim,
  )
 import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Generic.Updaters (newTxBody)
@@ -160,8 +193,6 @@ data Rep era t where
   GenHashR :: Rep era (KeyHash 'Genesis (EraCrypto era))
   GenDelegHashR :: Rep era (KeyHash 'GenesisDelegate (EraCrypto era))
   VHashR :: Rep era (KeyHash 'Voting (EraCrypto era))
-  CommColdHashR :: Rep era (KeyHash 'CommitteeColdKey (EraCrypto era))
-  CommHotHashR :: Rep era (KeyHash 'CommitteeHotKey (EraCrypto era))
   PoolParamsR :: Rep era (PoolParams (EraCrypto era))
   NewEpochStateR :: Rep era (NewEpochState era)
   IntR :: Rep era Int
@@ -219,6 +250,19 @@ data Rep era t where
   ScriptsNeededR :: Proof era -> Rep era (ScriptsNeededF era)
   ScriptPurposeR :: Proof era -> Rep era (ScriptPurpose era)
   TxBodyR :: Proof era -> Rep era (TxBodyF era)
+  BootstrapWitnessR :: Crypto (EraCrypto era) => Rep era (BootstrapWitness (EraCrypto era))
+  SigningKeyR :: Rep era SigningKey
+  TxWitsR :: Proof era -> Rep era (TxWitsF era)
+  PayHashR :: Rep era (KeyHash 'Payment (EraCrypto era))
+  TxR :: Proof era -> Rep era (TxF era)
+  ScriptIntegrityHashR :: Rep era (SafeHash (EraCrypto era) EraIndependentScriptIntegrity)
+  AuxiliaryDataHashR :: Rep era (AuxiliaryDataHash (EraCrypto era))
+  GovernanceProcedureR :: Rep era (GovernanceProcedure era)
+  WitVKeyR :: Proof era -> Rep era (WitVKey 'Witness (EraCrypto era))
+  TxAuxDataR :: Proof era -> Rep era (TxAuxDataF era)
+  CommColdHashR :: Rep era (KeyHash 'CommitteeColdKey (EraCrypto era))
+  CommHotHashR :: Rep era (KeyHash 'CommitteeHotKey (EraCrypto era))
+  LanguageR :: Rep era Language
 
 stringR :: Rep era String
 stringR = ListR CharR
@@ -322,7 +366,25 @@ instance Singleton (Rep e) where
     do Refl <- testEql c d; pure Refl
   testEql (TxBodyR c) (TxBodyR d) =
     do Refl <- testEql c d; pure Refl
+  testEql BootstrapWitnessR BootstrapWitnessR = Just Refl
+  testEql SigningKeyR SigningKeyR = Just Refl
+  testEql (TxWitsR c) (TxWitsR d) =
+    do Refl <- testEql c d; pure Refl
+  testEql PayHashR PayHashR = Just Refl
+  testEql (TxR c) (TxR d) =
+    do Refl <- testEql c d; pure Refl
+  testEql ScriptIntegrityHashR ScriptIntegrityHashR = Just Refl
+  testEql AuxiliaryDataHashR AuxiliaryDataHashR = Just Refl
+  testEql GovernanceProcedureR GovernanceProcedureR = Just Refl
+  testEql (WitVKeyR c) (WitVKeyR d) =
+    do Refl <- testEql c d; pure Refl
+  testEql (TxAuxDataR c) (TxAuxDataR d) =
+    do Refl <- testEql c d; pure Refl
+  testEql CommColdHashR CommColdHashR = Just Refl
+  testEql CommHotHashR CommHotHashR = Just Refl
+  testEql LanguageR LanguageR = Just Refl
   testEql _ _ = Nothing
+
   cmpIndex x y = compare (shape x) (shape y)
 
 -- ============================================================
@@ -368,8 +430,6 @@ instance Show (Rep era t) where
   show (ProtVerR x) = "(ProtVer " ++ short x ++ ")"
   show SlotNoR = "(SlotNo c)"
   show SizeR = "Size"
-  show CommColdHashR = "CommColdHash"
-  show CommHotHashR = "CommHotHash"
   show VCredR = "(Credential 'Voting c)"
   show VHashR = "(KeyHash 'Voting c)"
   show MultiAssetR = "(MultiAsset c)"
@@ -400,6 +460,19 @@ instance Show (Rep era t) where
   show (ScriptsNeededR p) = "(ScriptsNeeded " ++ short p ++ ")"
   show (ScriptPurposeR p) = "(ScriptPurpose " ++ short p ++ ")"
   show (TxBodyR p) = "(TxBody " ++ short p ++ ")"
+  show BootstrapWitnessR = "(BootstrapWitness c)"
+  show SigningKeyR = "Byron.SigningKey"
+  show (TxWitsR p) = "(TxWits " ++ short p ++ ")"
+  show PayHashR = "(KeyHash 'Payment c)"
+  show (TxR p) = "(Tx " ++ short p ++ ")"
+  show ScriptIntegrityHashR = "ScriptIntegrityHash"
+  show AuxiliaryDataHashR = "AuxiliaryDataHash"
+  show GovernanceProcedureR = "GovernanceProcedure"
+  show (WitVKeyR _) = "(WitVKey 'Witness c)"
+  show (TxAuxDataR p) = "(TxAuxData " ++ short p ++ ")"
+  show CommColdHashR = "CommColdHash"
+  show CommHotHashR = "CommHotHash"
+  show LanguageR = "Language"
 
 synopsis :: forall e t. Rep e t -> t -> String
 synopsis RationalR r = show r
@@ -452,13 +525,9 @@ synopsis NewEpochStateR _ = "NewEpochStateR ..."
 synopsis (ProtVerR _) (ProtVer x y) = "(" ++ show x ++ " " ++ show y ++ ")"
 synopsis SlotNoR x = show x
 synopsis SizeR x = show x
-synopsis VCredR x = show x
-synopsis VHashR x = show x
-synopsis CommColdHashR x = show x
-synopsis CommHotHashR x = show x
 synopsis VCredR x = show (credSummary x)
 synopsis VHashR x = "(KeyHash 'Voting " ++ show (keyHashSummary x) ++ ")"
-synopsis MultiAssetR (MultiAsset x) = "(MultiAsset num tokens = " ++ show (Map.size x) ++ ")"
+synopsis MultiAssetR x = "(MultiAsset " ++ show (pcMultiAsset x) ++ ")"
 synopsis PolicyIDR (PolicyID x) = show (pcScriptHash x)
 synopsis (WitnessesFieldR p) x = show $ ppRecord' mempty $ unReflect pcWitnessesField p x
 synopsis AssetNameR (AssetName x) = take 10 (show x)
@@ -486,7 +555,19 @@ synopsis IntegerR x = show x
 synopsis (ScriptsNeededR _) x = show x
 synopsis (ScriptPurposeR p) x = show (pcScriptPurpose p x)
 synopsis (TxBodyR _) x = show x
-
+synopsis BootstrapWitnessR x = "(BootstrapWitness " ++ show (ppVKey (bwKey x)) ++ ")"
+synopsis SigningKeyR key = "(publicKeyOfSecretKey " ++ formatToString shortVerificationKeyHexF (toVerification key) ++ ")"
+synopsis (TxWitsR p) (TxWitsF _ x) = show ((unReflect pcWitnesses p x) :: PDoc)
+synopsis PayHashR k = "(KeyHash 'Payment " ++ show (keyHashSummary k) ++ ")"
+synopsis (TxR _) x = show x
+synopsis ScriptIntegrityHashR x = show (trim (ppHash (extractHash x)))
+synopsis AuxiliaryDataHashR (AuxiliaryDataHash x) = show (trim (ppHash (extractHash x)))
+synopsis GovernanceProcedureR _x = "GovernanceProcedure ..." -- show(prettyA x)
+synopsis (WitVKeyR p) x = show ((unReflect pcWitVKey p x) :: PDoc)
+synopsis (TxAuxDataR _) x = show x
+synopsis CommColdHashR x = show x
+synopsis CommHotHashR x = show x
+synopsis LanguageR x = show x
 
 synSum :: Rep era a -> a -> String
 synSum (MapR _ CoinR) m = ", sum = " ++ show (pcCoin (Map.foldl' (<>) mempty m))
@@ -586,7 +667,19 @@ instance Shaped (Rep era) any where
   shape (ScriptsNeededR p) = Nary 66 [shape p]
   shape (ScriptPurposeR p) = Nary 67 [shape p]
   shape (TxBodyR p) = Nary 68 [shape p]
-
+  shape BootstrapWitnessR = Nullary 69
+  shape SigningKeyR = Nullary 70
+  shape (TxWitsR p) = Nary 71 [shape p]
+  shape PayHashR = Nullary 72
+  shape (TxR p) = Nary 73 [shape p]
+  shape ScriptIntegrityHashR = Nullary 74
+  shape AuxiliaryDataHashR = Nullary 75
+  shape GovernanceProcedureR = Nullary 76
+  shape (WitVKeyR p) = Nary 77 [shape p]
+  shape (TxAuxDataR p) = Nary 78 [shape p]
+  shape CommColdHashR = Nullary 79
+  shape CommHotHashR = Nullary 80
+  shape LanguageR = Nullary 81
 
 compareRep :: forall era t s. Rep era t -> Rep era s -> Ordering
 compareRep x y = cmpIndex @(Rep era) x y
@@ -639,13 +732,10 @@ genSizedRep _ RewardR = arbitrary
 genSizedRep n (MaybeR x) = frequency [(1, pure Nothing), (5, Just <$> genSizedRep n x)]
 genSizedRep _ NewEpochStateR = undefined
 genSizedRep _ (ProtVerR proof) = genProtVer proof
-genSizedRep _ SlotNoR = arbitrary
+genSizedRep n SlotNoR = pure $ SlotNo (fromIntegral n)
 genSizedRep _ SizeR = do lo <- choose (1, 6); hi <- choose (6, 10); pure (SzRng lo hi)
 genSizedRep _ VCredR = arbitrary
 genSizedRep _ VHashR = arbitrary
-genSizedRep _ CommColdHashR = arbitrary
-genSizedRep _ CommHotHashR = arbitrary
-genSizedRep _ MultiAssetR = arbitrary
 genSizedRep n MultiAssetR = MultiAsset <$> genSizedRep n (MapR (PolicyIDR @era) (MapR AssetNameR IntegerR))
 genSizedRep _ PolicyIDR = arbitrary
 genSizedRep _ (WitnessesFieldR _) = pure $ AddrWits Set.empty
@@ -695,12 +785,52 @@ genSizedRep _ (TxBodyR p) =
     Alonzo _ -> pure (TxBodyF p (newTxBody p []))
     Babbage _ -> pure (TxBodyF p (newTxBody p []))
     Conway _ -> pure (TxBodyF p (newTxBody p []))
+genSizedRep _ BootstrapWitnessR = arbitrary
+genSizedRep _ SigningKeyR = genSigningKey
+genSizedRep _ (TxWitsR p) =
+  case p of
+    Shelley _ -> TxWitsF p <$> arbitrary
+    Allegra _ -> TxWitsF p <$> arbitrary
+    Mary _ -> TxWitsF p <$> arbitrary
+    Alonzo _ -> TxWitsF p <$> arbitrary
+    Babbage _ -> TxWitsF p <$> arbitrary
+    Conway _ -> TxWitsF p <$> arbitrary
+genSizedRep _ PayHashR = arbitrary
+genSizedRep _ (TxR p) =
+  case p of
+    Shelley _ -> TxF p <$> arbitrary
+    Allegra _ -> TxF p <$> arbitrary
+    Mary _ -> TxF p <$> arbitrary
+    Alonzo _ -> TxF p <$> arbitrary
+    Babbage _ -> TxF p <$> arbitrary
+    Conway _ -> TxF p <$> arbitrary
+genSizedRep _ ScriptIntegrityHashR = arbitrary
+genSizedRep _ AuxiliaryDataHashR = arbitrary
+genSizedRep _ GovernanceProcedureR = GovernanceVotingProcedure <$> arbitrary
+genSizedRep _ (WitVKeyR _) = arbitrary
+genSizedRep _ (TxAuxDataR p) = genTxAuxDataF p
+genSizedRep _ CommColdHashR = arbitrary
+genSizedRep _ CommHotHashR = arbitrary
+genSizedRep _ LanguageR = arbitrary
 
 genRep ::
   Era era =>
   Rep era b ->
   Gen b
 genRep x = do (NonNegative n) <- arbitrary; genSizedRep n x
+
+-- | A Byron address is made of a 32 byte ByteString, so here we
+--   generate some random ones with size 32 Bytes
+gen32ByteString :: Gen ByteString
+gen32ByteString = do
+  list <- vectorOf 32 (elements ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"])
+  pure (List.foldl' (<>) mempty list)
+
+-- | Turn a random bytestring into a SigningKey
+genSigningKey :: Gen SigningKey
+genSigningKey = do
+  seed <- gen32ByteString
+  pure (SigningKey $ Byron.generate seed (mempty :: ByteString))
 
 genProtVer :: Era era => Proof era -> Gen ProtVer
 genProtVer proof = frequency (zipWith pair [count, count - 1 .. 1] versions)
@@ -800,6 +930,19 @@ shrinkRep IntegerR t = shrink t
 shrinkRep (ScriptsNeededR _) _ = []
 shrinkRep (ScriptPurposeR _) _ = []
 shrinkRep (TxBodyR _) _ = []
+shrinkRep BootstrapWitnessR t = shrink t
+shrinkRep SigningKeyR _ = []
+shrinkRep (TxWitsR _p) _ = []
+shrinkRep PayHashR t = shrink t
+shrinkRep (TxR _) _ = []
+shrinkRep ScriptIntegrityHashR x = shrink x
+shrinkRep AuxiliaryDataHashR x = shrink x
+shrinkRep GovernanceProcedureR _ = []
+shrinkRep (WitVKeyR _) x = shrink x
+shrinkRep (TxAuxDataR _) _ = []
+shrinkRep CommColdHashR x = shrink x
+shrinkRep CommHotHashR x = shrink x
+shrinkRep LanguageR x = shrink x
 
 -- ===========================
 
@@ -810,23 +953,6 @@ short (Mary _) = "Mary"
 short (Alonzo _) = "Alonzo"
 short (Babbage _) = "Babbage"
 short (Conway _) = "Conway"
-
-{-
-synopsisPParam :: forall era. Proof era -> Core.PParams era -> String
-synopsisPParam p x = withEraPParams p help
-  where
-    help :: Core.EraPParams era => String
-    help =
-      "PParams{maxBBSize="
-        ++ show (x ^. Core.ppMaxBBSizeL)
-        ++ ", maxBHSize="
-        ++ show (x ^. Core.ppMaxBBSizeL)
-        ++ ", maxTxSize="
-        ++ show (x ^. Core.ppMaxTxSizeL)
-        ++ ", protoVersion="
-        ++ (synopsis (ProtVerR p) (x ^. Core.ppProtocolVersionL))
-        ++ "}"
--}
 
 hasOrd :: Rep era t -> s t -> Typed (HasConstraint Ord (s t))
 hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
@@ -911,6 +1037,25 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help (ScriptsNeededR _) _ = failT ["IsValid does not have Ord instance"]
     help (ScriptPurposeR _) _ = failT ["ScriptPurpose does not have Ord instance"]
     help (TxBodyR _) _ = failT ["TxBody does not have Ord instance"]
+    help BootstrapWitnessR t = pure $ With t
+    help SigningKeyR _ = failT ["SigningKey does not have an Ord instance"]
+    help (TxWitsR _) _ = failT ["TxWits does not have an Ord instance"]
+    help PayHashR p = pure $ With p
+    help (TxR _) _ = failT ["Tx does not have Ord instance"]
+    help ScriptIntegrityHashR x = pure $ With x
+    help AuxiliaryDataHashR x = pure $ With x
+    help GovernanceProcedureR _ = failT ["GovernanceProcedure does not have Ord instance"]
+    help (WitVKeyR p) x = case p of
+      Shelley _ -> pure $ With x
+      Allegra _ -> pure $ With x
+      Mary _ -> pure $ With x
+      Alonzo _ -> pure $ With x
+      Babbage _ -> pure $ With x
+      Conway _ -> pure $ With x
+    help (TxAuxDataR _) _ = failT ["TxAuxData does not have Ord instance"]
+    help CommColdHashR x = pure $ With x
+    help CommHotHashR x = pure $ With x
+    help LanguageR x = pure $ With x
 
 hasEq :: Rep era t -> s t -> Typed (HasConstraint Eq (s t))
 hasEq rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
@@ -919,6 +1064,12 @@ hasEq rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help (TxOutR _) v = pure $ With v
     help (ScriptR _) v = pure $ With v
     help DataR v = pure $ With v
+    help SigningKeyR v = pure $ With v
+    help (TxWitsR _) v = pure $ With v
+    help (TxR _) v = pure $ With v
+    help (TxAuxDataR _) v = pure $ With v
+    help IsValidR v = pure $ With v
+    help GovernanceProcedureR _ = failT ["GovernanceProcedure does have an Eq instance, but it requires (Core.EraPParams era)"]
     help (ScriptPurposeR p) v = case whichTxCert p of
       TxCertShelleyToBabbage -> pure $ With v
       TxCertConwayToConway -> pure $ With v

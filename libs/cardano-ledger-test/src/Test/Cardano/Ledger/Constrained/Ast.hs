@@ -585,11 +585,23 @@ simplify :: Term era t -> Typed t
 simplify (Lit _ x) = pure x
 simplify (Dom (Lit _ x)) = pure (Map.keysSet x)
 simplify (Dom (ProjM _ _ t)) = simplify (Dom t)
+simplify (Dom x) = do
+  m <- simplify x
+  pure (Map.keysSet m)
 simplify (Rng (Lit _ x)) = pure (Set.fromList (Map.elems x))
 simplify (Rng (ProjM l _ (Lit _ m))) = pure (Set.fromList (Map.elems (Map.map (\x -> x ^. l) m)))
+simplify (Rng x) = do
+  m <- simplify x
+  pure (Set.fromList (Map.elems m))
 simplify (Elems (Lit _ x)) = pure (Map.elems x)
 simplify (Elems (ProjM l _ (Lit _ m))) = pure (Map.elems (Map.map (\x -> x ^. l) m))
+simplify (Elems x) = do
+  m <- simplify x
+  pure (Map.elems m)
 simplify (ProjM l _ (Lit _ x)) = pure (Map.map (\z -> z ^. l) x)
+simplify (ProjM l _ t) = do
+  m <- simplify t
+  pure (Map.map (\z -> z ^. l) m)
 simplify (ProjS l _ (Lit _ x)) = pure (Set.map (\z -> z ^. l) x)
 simplify (ProjS l _ t) = do
   s <- simplify t

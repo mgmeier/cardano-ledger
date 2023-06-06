@@ -2,6 +2,7 @@
 
 module Test.Cardano.Ledger.Constrained.Preds.Repl where
 
+import Data.Char (toLower)
 import qualified Data.List as List
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -31,14 +32,14 @@ repl proof env@(Env emap) =
 
 goRepl :: Proof era -> Env era -> String -> IO ()
 goRepl proof env@(Env emap) more = do
-  let ok = Map.filterWithKey (\k _ -> List.isPrefixOf more k) emap
+  let ok = Map.filterWithKey (\k _ -> List.isInfixOf (map toLower more) (map toLower k)) emap
   if more == ""
     then
       putStrLn
         ( unlines
             [ "\nEnter one of these Strings at the 'prompt>' to see its value."
             , "Type ':q' to exit."
-            , "Type ':pXXX' to see variables whose name have prefix 'XXX'."
+            , "Type ':pXXX' to see variables whose name contains the substring 'XXX' (case insensitive)."
             , "Type 'help' or '?' to see these instructions.\n"
             ]
         )

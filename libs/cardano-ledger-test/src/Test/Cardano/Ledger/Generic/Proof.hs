@@ -69,8 +69,10 @@ import qualified Cardano.Crypto.KES.Class as KES (Signable)
 import Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Alonzo (AlonzoEra)
-import Cardano.Ledger.Alonzo.Core (AlonzoEraPParams)
+import Cardano.Ledger.Alonzo.Core (AlonzoEraPParams, AlonzoEraTxBody)
+import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..))
 import Cardano.Ledger.Alonzo.TxOut (AlonzoEraTxOut (..), AlonzoTxOut (..))
+import Cardano.Ledger.Alonzo.TxWits (AlonzoTxWits (..))
 import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded)
 import Cardano.Ledger.Babbage (BabbageEra)
 import Cardano.Ledger.Babbage.Core (BabbageEraPParams)
@@ -80,16 +82,28 @@ import qualified Cardano.Ledger.BaseTypes as Base (Seed)
 import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Conway (ConwayEra)
 import Cardano.Ledger.Conway.TxCert (ConwayEraTxCert, ConwayTxCert (..))
-import Cardano.Ledger.Core (Era (EraCrypto), EraPParams, EraRule, EraTx, EraTxOut, TxCert, TxOut, Value)
+import Cardano.Ledger.Core (
+  Era (EraCrypto),
+  EraPParams,
+  EraRule,
+  EraTx,
+  EraTxAuxData,
+  EraTxOut,
+  Script,
+  TxCert,
+  TxOut,
+  TxWits,
+  Value,
+ )
 import Cardano.Ledger.Crypto (Crypto, DSIGN, HASH, KES, StandardCrypto, VRF)
 import Cardano.Ledger.Keys (DSignable)
 import Cardano.Ledger.Mary (MaryEra)
-import Cardano.Ledger.Mary.Core (MaryEraTxBody)
 import Cardano.Ledger.Mary.Value (MaryValue)
 import Cardano.Ledger.Shelley (ShelleyEra)
-import Cardano.Ledger.Shelley.Core (EraGovernance, EraIndependentTxBody, ShelleyEraTxCert)
+import Cardano.Ledger.Shelley.Core (EraGovernance, EraIndependentTxBody, ShelleyEraTxBody, ShelleyEraTxCert)
 import Cardano.Ledger.Shelley.TxCert (ShelleyTxCert)
 import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
+import Cardano.Ledger.Shelley.TxWits (ShelleyTxWits (..))
 import Cardano.Ledger.Shelley.UTxO (ShelleyScriptsNeeded)
 import Cardano.Ledger.UTxO (EraUTxO (..), ScriptsNeeded)
 import Cardano.Protocol.TPraos.API (PraosCrypto)
@@ -173,7 +187,9 @@ class
   ( EraGovernance era
   , EraTx era
   , EraUTxO era
+  , EraTxAuxData era
   , ShelleyEraTxCert era
+  , ShelleyEraTxBody era
   , ReflectC (EraCrypto era)
   ) =>
   Reflect era
@@ -445,13 +461,20 @@ whichPParams (Babbage _) = PParamsBabbageToConway
 whichPParams (Conway _) = PParamsBabbageToConway
 
 data UTxOWit era where
-  UTxOShelleyToMary :: (EraUTxO era, ScriptsNeeded era ~ ShelleyScriptsNeeded era) => UTxOWit era
+  UTxOShelleyToMary ::
+    ( EraUTxO era
+    , ScriptsNeeded era ~ ShelleyScriptsNeeded era
+    , TxWits era ~ ShelleyTxWits era
+    ) =>
+    UTxOWit era
   UTxOAlonzoToConway ::
     ( EraUTxO era
-    , MaryEraTxBody era
+    , AlonzoEraTxBody era
     , AlonzoEraPParams era
     , AlonzoEraTxOut era
     , ScriptsNeeded era ~ AlonzoScriptsNeeded era
+    , Script era ~ AlonzoScript era
+    , TxWits era ~ AlonzoTxWits era
     ) =>
     UTxOWit era
 

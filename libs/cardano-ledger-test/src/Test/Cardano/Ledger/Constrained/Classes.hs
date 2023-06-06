@@ -18,7 +18,7 @@ import Cardano.Ledger.Core
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
-import Cardano.Ledger.Pretty (PDoc)
+import Cardano.Ledger.Pretty (PDoc, ppString)
 import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
 import qualified Cardano.Ledger.Shelley.Governance as Gov (GovernanceState (..))
 import Cardano.Ledger.Shelley.PParams (pvCanFollow)
@@ -60,7 +60,16 @@ import Test.Cardano.Ledger.Constrained.Size (
  )
 import Test.Cardano.Ledger.Conway.Arbitrary ()
 import Test.Cardano.Ledger.Core.Arbitrary ()
-import Test.Cardano.Ledger.Generic.PrettyCore (pcScript, pcScriptsNeeded, pcTxBody, pcTxCert, pcTxOut, pcVal)
+import Test.Cardano.Ledger.Generic.PrettyCore (
+  pcScript,
+  pcScriptsNeeded,
+  pcTx,
+  pcTxBody,
+  pcTxCert,
+  pcTxOut,
+  pcVal,
+  pcWitnesses,
+ )
 import Test.Cardano.Ledger.Generic.Proof (
   GoodCrypto,
   Proof (..),
@@ -90,6 +99,8 @@ import Test.QuickCheck (
 -- import qualified Control.Monad.Trans.Class as Trans(MonadTrans (lift))
 -- import Data.Default.Class (Default (def))
 -- import Cardano.Ledger.Alonzo.Tx(IsValid(..))
+import Cardano.Ledger.Alonzo.TxWits ()
+import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..))
 
 -- =====================================================================
 -- Helper functions
@@ -430,6 +441,77 @@ instance Count SlotNo where
 -- ============================================================================
 -- Special accomodation for Type Families
 -- ============================================================================
+
+data TxAuxDataF era where
+  TxAuxDataF :: Proof era -> TxAuxData era -> TxAuxDataF era
+
+hashTxAuxDataF :: Reflect era => TxAuxDataF era -> AuxiliaryDataHash (EraCrypto era)
+hashTxAuxDataF (TxAuxDataF _ x) = hashTxAuxData x
+
+unTxAuxData :: TxAuxDataF era -> TxAuxData era
+unTxAuxData (TxAuxDataF _ x) = x
+
+instance Show (TxAuxDataF era) where
+  show (TxAuxDataF p x) = show ((unReflect pcAuxData p x) :: PDoc)
+
+instance Eq (TxAuxDataF era) where
+  (TxAuxDataF (Shelley _) x) == (TxAuxDataF (Shelley _) y) = x == y
+  (TxAuxDataF (Allegra _) x) == (TxAuxDataF (Allegra _) y) = x == y
+  (TxAuxDataF (Mary _) x) == (TxAuxDataF (Mary _) y) = x == y
+  (TxAuxDataF (Alonzo _) x) == (TxAuxDataF (Alonzo _) y) = x == y
+  (TxAuxDataF (Babbage _) x) == (TxAuxDataF (Babbage _) y) = x == y
+  (TxAuxDataF (Conway _) x) == (TxAuxDataF (Conway _) y) = x == y
+
+pcAuxData :: Proof era -> TxAuxData era -> PDoc
+pcAuxData p _x = ppString ("TxAuxData " ++ show p) -- TODO make this more accurate
+
+genTxAuxDataF :: Proof era -> Gen (TxAuxDataF era)
+genTxAuxDataF p@(Shelley _) = TxAuxDataF p <$> arbitrary
+genTxAuxDataF p@(Allegra _) = TxAuxDataF p <$> arbitrary
+genTxAuxDataF p@(Mary _) = TxAuxDataF p <$> arbitrary
+genTxAuxDataF p@(Alonzo _) = TxAuxDataF p <$> arbitrary
+genTxAuxDataF p@(Babbage _) = TxAuxDataF p <$> arbitrary
+genTxAuxDataF p@(Conway _) = TxAuxDataF p <$> arbitrary
+
+-- ==============
+
+data TxF era where
+  TxF :: Proof era -> Tx era -> TxF era
+
+unTxF :: TxF era -> Tx era
+unTxF (TxF _ x) = x
+
+instance Show (TxF era) where
+  show (TxF p x) = show ((unReflect pcTx p x) :: PDoc)
+
+instance Eq (TxF era) where
+  (TxF (Shelley _) x) == (TxF (Shelley _) y) = x == y
+  (TxF (Allegra _) x) == (TxF (Allegra _) y) = x == y
+  (TxF (Mary _) x) == (TxF (Mary _) y) = x == y
+  (TxF (Alonzo _) x) == (TxF (Alonzo _) y) = x == y
+  (TxF (Babbage _) x) == (TxF (Babbage _) y) = x == y
+  (TxF (Conway _) x) == (TxF (Conway _) y) = x == y
+
+-- ==============
+
+data TxWitsF era where
+  TxWitsF :: Proof era -> TxWits era -> TxWitsF era
+
+unTxWitsF :: TxWitsF era -> TxWits era
+unTxWitsF (TxWitsF _ x) = x
+
+instance Show (TxWitsF era) where
+  show (TxWitsF p x) = show ((unReflect pcWitnesses p x) :: PDoc)
+
+instance Eq (TxWitsF era) where
+  (TxWitsF (Shelley _) x) == (TxWitsF (Shelley _) y) = x == y
+  (TxWitsF (Allegra _) x) == (TxWitsF (Allegra _) y) = x == y
+  (TxWitsF (Mary _) x) == (TxWitsF (Mary _) y) = x == y
+  (TxWitsF (Alonzo _) x) == (TxWitsF (Alonzo _) y) = x == y
+  (TxWitsF (Babbage _) x) == (TxWitsF (Babbage _) y) = x == y
+  (TxWitsF (Conway _) x) == (TxWitsF (Conway _) y) = x == y
+
+-- ==============================
 
 data TxBodyF era where
   TxBodyF :: Proof era -> TxBody era -> TxBodyF era

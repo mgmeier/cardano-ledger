@@ -49,7 +49,7 @@ genPParams :: Reflect era => Proof era -> Natural -> Natural -> Natural -> Gen (
 genPParams proof tx bb bh = do
   maxTxExUnits2 <- ExUnits <$> (fromIntegral <$> choose (100 :: Int, 10000)) <*> (fromIntegral <$> choose (100 :: Int, 10000))
   maxCollateralInputs <- elements [2 .. 5]
-  collateralPercentage2 <- fromIntegral <$> chooseInt (1, 1000)
+  collateralPercentage2 <- fromIntegral <$> chooseInt (1, 200)
   minfeeA <- Coin <$> choose (0, 100)
   minfeeB <- Coin <$> choose (0, 10)
   pure

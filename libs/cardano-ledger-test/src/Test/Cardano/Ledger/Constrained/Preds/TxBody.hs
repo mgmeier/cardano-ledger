@@ -9,22 +9,23 @@
 
 module Test.Cardano.Ledger.Constrained.Preds.TxBody where
 
-import Cardano.Ledger.Address (Withdrawals (..))
-import Cardano.Ledger.Alonzo.Core (AlonzoEraTxOut (..))
+import Cardano.Ledger.Address (BootstrapAddress, Withdrawals (..))
+import Cardano.Ledger.Alonzo.Core (AlonzoEraTxBody (..), AlonzoEraTxOut (..))
 import Cardano.Ledger.Api (setMinFeeTx)
-import Cardano.Ledger.BaseTypes (EpochNo (..), StrictMaybe (..), maybeToStrictMaybe)
+import Cardano.Ledger.BaseTypes (EpochNo (..), StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Conway.TxCert (
   ConwayDelegCert (..),
   ConwayTxCert (..),
   Delegatee (..),
  )
-import Cardano.Ledger.Core (EraScript (..), EraTx (..), EraTxBody (..), bodyTxL, coinTxOutL, feeTxBodyL)
+import Cardano.Ledger.Core (EraScript (..), EraTx (..), EraTxBody (..), TxWits, bodyTxL, coinTxOutL, feeTxBodyL)
 import Cardano.Ledger.Credential (StakeCredential)
 import Cardano.Ledger.Era (Era (EraCrypto))
-import Cardano.Ledger.Keys (GenDelegs (..), KeyHash, KeyRole (..))
+import Cardano.Ledger.Keys (GenDelegPair (..), GenDelegs (..), Hash, KeyHash, KeyRole (..))
 import Cardano.Ledger.Pretty (PDoc, ppMap, ppSet, ppSexp)
 import Cardano.Ledger.Shelley.AdaPots (consumedTxBody, producedTxBody)
+import Cardano.Ledger.Shelley.Core (ShelleyEraTxBody (..))
 import Cardano.Ledger.Shelley.TxCert (
   PoolCert (..),
   ShelleyDelegCert (..),
@@ -39,13 +40,13 @@ import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Classes
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Examples (checkForSoundness)
-import Test.Cardano.Ledger.Constrained.Monad (Typed, monadTyped)
+import Test.Cardano.Ledger.Constrained.Monad (Typed, failT, monadTyped)
 import Test.Cardano.Ledger.Constrained.Preds.Certs (certsStage)
 import Test.Cardano.Ledger.Constrained.Preds.DPState (dstateStage, pstateStage, vstateStage)
 import Test.Cardano.Ledger.Constrained.Preds.PParams (pParamsStage)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
 import Test.Cardano.Ledger.Constrained.Preds.TxOut (txOutPreds)
-import Test.Cardano.Ledger.Constrained.Preds.Universes
+import Test.Cardano.Ledger.Constrained.Preds.Universes hiding (main)
 import Test.Cardano.Ledger.Constrained.Rewrite
 import Test.Cardano.Ledger.Constrained.Size (OrdCond (..), Size (..))
 import Test.Cardano.Ledger.Constrained.Solver (toolChainSub)
@@ -59,10 +60,11 @@ import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Generic.Updaters (Merge (..), newTx, newTxBody, newWitnesses)
 import Test.QuickCheck
 
+import Cardano.Crypto.Signing (SigningKey)
 import Cardano.Ledger.Address (Addr (..), RewardAcnt (..))
-import Cardano.Ledger.Alonzo.Scripts (ExUnits (..))
-import Cardano.Ledger.Alonzo.Scripts.Data (Data (..))
-import Cardano.Ledger.Alonzo.Tx (ScriptPurpose (..), rdptr)
+import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..), ExUnits (..))
+import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), hashData)
+import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptPurpose (..), rdptr)
 import Cardano.Ledger.Alonzo.TxWits (
   RdmrPtr (..),
   Redeemers (..),
@@ -71,20 +73,33 @@ import Cardano.Ledger.Alonzo.TxWits (
 import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..), getInputDataHashesTxBody)
 import Cardano.Ledger.Core (EraTxOut (..), Value)
 import Cardano.Ledger.Credential (Credential (..), StakeReference (..))
-import Cardano.Ledger.Hashes (DataHash, ScriptHash (..))
+import Cardano.Ledger.Hashes (DataHash, EraIndependentTxBody, ScriptHash (..))
+import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness)
 import Cardano.Ledger.Mary.Core (MaryEraTxBody)
 import Cardano.Ledger.Mary.Value (AssetName (..), MaryValue (..))
+import Cardano.Ledger.SafeHash (SafeHash, extractHash, hashAnnotated)
 import Cardano.Ledger.Shelley.LedgerState (keyCertsRefunds, totalCertsDeposits)
-import Cardano.Ledger.Shelley.Rules (witsVKeyNeeded)
+import Cardano.Ledger.Shelley.Rules (witsVKeyNeededFromBody)
 import Cardano.Ledger.Shelley.UTxO (ShelleyScriptsNeeded (..))
 import Cardano.Ledger.UTxO (EraUTxO (..), UTxO (..))
-import Cardano.Ledger.Val (Val (coin))
+import Cardano.Ledger.Val (Val (coin, inject, (<->)))
+import qualified Cardano.Ledger.Val as Val (scale)
 import qualified Data.List as List
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word16)
 import qualified Data.Word as Word
 import System.IO.Unsafe
 import Test.Cardano.Ledger.Generic.Functions (scriptsNeeded')
+
+import Cardano.Crypto.DSIGN.Ed25519 (Ed25519DSIGN)
+import Cardano.Ledger.Alonzo.Core (ScriptIntegrityHash)
+import Cardano.Ledger.Alonzo.Language (Language (..))
+import Cardano.Ledger.Api.Tx (getMinFeeTx)
+import Cardano.Ledger.Crypto (DSIGN)
+import Cardano.Ledger.Shelley.TxBody (WitVKey (..))
+import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..), mkWitnessVKey)
+import Test.Cardano.Ledger.Generic.Updaters (newScriptIntegrityHash)
 
 -- =======================================================================================
 -- How to construct an actual TxBody from an (Env era) that stores a
@@ -95,19 +110,23 @@ import Test.Cardano.Ledger.Generic.Functions (scriptsNeeded')
 bodyNames :: [String]
 bodyNames =
   [ "inputs"
-  , "refInputs"
   , "collateral"
+  , "refInputs"
   , "outputs"
   , "collateralReturn"
   , "totalCol"
   , "certs"
   , "withdrawals"
   , "txfee"
-  , "ttl"
   , "validityInterval"
-  , "mint"
+  , "ttl"
+  , "update"
   , "reqSignerHashes"
+  , "mint"
+  , "wppHash"
+  , "adHash"
   , "networkID"
+  -- , "govProcs"
   ]
 
 lookupTxBody :: Env era -> String -> [TxBodyField era]
@@ -126,6 +145,8 @@ lookupTxBody (Env m) name = case (name, Map.lookup name m) of
   ("mint", Just (Payload (MapR ScriptHashR (MapR AssetNameR IntegerR)) x _)) -> [Mint (liftMultiAsset x)]
   ("reqSignerHashes", Just (Payload (SetR WitHashR) x _)) -> [ReqSignerHashes x]
   ("networkID", Just (Payload (MaybeR NetworkR) x _)) -> [Txnetworkid (maybeToStrictMaybe x)]
+  ("adHash", Just (Payload (MaybeR AuxiliaryDataHashR) x _)) -> [AdHash (maybeToStrictMaybe x)]
+  ("wppHash", Just (Payload (MaybeR ScriptIntegrityHashR) x _)) -> [WppHash (maybeToStrictMaybe x)]
   _ -> []
 
 txBodyFromEnv :: Proof era -> Env era -> TxBody era
@@ -165,8 +186,9 @@ txBodyPreds p =
        , Subset (Dom mint) (Dom (nonSpendScriptUniv p))
        , Random networkID
        , -- utxo
-         MetaSize (SzRng 14 18) utxoSize -- must be bigger than sum of (maxsize inputs 10) and (mazsize collateral 3)
+         MetaSize (SzRng 20 25) utxoSize -- must be bigger than sum of (maxsize inputs 10) and (mazsize collateral 3)
        , Sized utxoSize preUtxo
+       , Sized (Range 3 4) colUtxo
        , MapMember feeTxIn feeTxOut (Right preUtxo)
        , Subset (Dom preUtxo) txinUniv
        , Subset (Rng preUtxo) (txoutUniv p)
@@ -180,12 +202,11 @@ txBodyPreds p =
        , NotMember feeTxIn (Dom colUtxo)
        , NotMember feeTxOut (Rng colUtxo)
        , Sized (Range 2 3) collateral
-       , Sized (Range 3 4) colUtxo
        , Subset (Dom colUtxo) txinUniv
        , Subset (Rng colUtxo) (colTxoutUniv p)
        , Subset collateral (Dom colUtxo)
-       , -- , Member (Left colInput) collateral -- DO we use this?
-         colRestriction :=: Restrict collateral colUtxo
+       , Member (Left colInput) collateral -- DO we use this?
+       , colRestriction :=: Restrict collateral colUtxo
        , SumsTo (Right (Coin 1)) sumCol EQL [ProjMap CoinR outputCoinL colRestriction]
        , totalCol :<-: (justTarget sumCol)
        , -- Or maybe   , GenFrom totalCol (maybeTarget ^$ sumCol)
@@ -200,9 +221,8 @@ txBodyPreds p =
        , Sized (Range 1 2) reqSignerHashes
        , Subset reqSignerHashes (Dom keymapUniv)
        , ttl :<-: (Constr "(+5)" (\x -> x + 5) ^$ currentSlot)
-       , txfee :<-: (constTarget (Coin 0))
-       , -- balanceCoin, used by (txOutPreds p balanceCoin (outputs p)) go generate 'outputs' that balance
-         spending :=: Restrict inputs (utxo p)
+       , tempTxFee :<-: (constTarget (Coin 0))
+       , spending :=: Restrict inputs (utxo p)
        , SumsTo
           (Right (Coin 1))
           balanceCoin
@@ -210,18 +230,33 @@ txBodyPreds p =
           [ProjMap CoinR outputCoinL spending, SumMap withdrawals, One txrefunds, One txdeposits]
        , txrefunds :<-: (Constr "certsRefunds" certsRefunds ^$ pparams p ^$ stakeDeposits ^$ certs)
        , txdeposits :<-: (Constr "certsDeposits" certsDeposits ^$ pparams p ^$ regPools ^$ certs)
-       , partialTxBody :<-: (partialTxBodyT p ^$ inputs ^$ withdrawals ^$ certs ^$ mint)
-       , scriptsNeeded :<-: (needT p ^$ partialTxBody ^$ (utxo p))
+       , scriptsNeeded :<-: (needT p ^$ tempTxBody ^$ (utxo p))
+       , Elems (ProjM fstL IsValidR (Restrict (Dom scriptWits) plutusUniv)) :=: valids
+       , txisvalid :<-: (Constr "allValid" allValid ^$ valids)
+       , Maybe txauxdata (Simple oneAuxdata) [Random oneAuxdata]
+       , adHash :<-: (Constr "hashMaybe" (hashTxAuxDataF <$>) ^$ txauxdata)
+       , Random tempWppHash
+       , tempTxBody :<-: txbodyTarget tempTxFee tempWppHash
+       , tempTx :<-: txTarget tempTxBody tempBootWits tempKeyWits
+       , --  , txterm :<-: (Constr "minFeeTx" computeFinalTx ^$ (pparams p) ^$ tempTx)
+         --  , txbodyterm :<-: (Constr "getBody" (\ (TxF pr tx) -> TxBodyF pr (tx ^. bodyTxL)) ^$ txterm)
+         txfee :<-: (Constr "finalFee" computeFinalFee ^$ (pparams p) ^$ tempTx)
+       , txbodyterm :<-: txbodyTarget txfee wppHash
+       , txterm :<-: txTarget txbodyterm bootWits keyWits
        ]
     ++ case whichUTxO p of
       UTxOShelleyToMary ->
         [ scriptWits :=: Restrict (Proj smNeededL (SetR ScriptHashR) scriptsNeeded) (allScriptUniv p)
+        , tempBootWits :<-: (Constr "boots" (bootWitsT p) ^$ spending ^$ tempTxBody ^$ byronAddrUniv)
+        , tempKeyWits :<-: witsVKeyTarget tempTxBody (constTarget Set.empty)
+        , bootWits :<-: (Constr "boots" (bootWitsT p) ^$ spending ^$ txbodyterm ^$ byronAddrUniv)
+        , keyWits :<-: witsVKeyTarget txbodyterm (constTarget Set.empty)
         ]
       UTxOAlonzoToConway ->
         [ Proj acNeededL (ListR (PairR (ScriptPurposeR p) ScriptHashR)) scriptsNeeded :=: acNeeded
         , neededHashSet :<-: (Constr "toSet" (\x -> Set.fromList (map snd x)) ^$ acNeeded)
         , scriptWits :=: Restrict neededHashSet (allScriptUniv p)
-        , rdmrPtrs :<-: (rdmrPtrsT ^$ partialTxBody ^$ acNeeded ^$ plutusUniv)
+        , rdmrPtrs :<-: (rdmrPtrsT ^$ tempTxBody ^$ acNeeded ^$ plutusUniv)
         , rdmrPtrs :=: Dom redeemers
         , SumsTo (Left (ExUnits 1 1)) (maxTxExUnits p) EQL [ProjMap ExUnitsR sndL redeemers]
         , -- Unfortunately SumsTo at ExUnits does not work except at EQL OrdCond.
@@ -229,10 +264,38 @@ txBodyPreds p =
           plutusDataHashes
             :<-: ( Constr "plutusDataHashes" getPlutusDataHashes
                     ^$ utxo p
-                    ^$ partialTxBody
+                    ^$ tempTxBody
                     ^$ allScriptUniv p
                  )
-        , Restrict plutusDataHashes dataUniv :=: txdats
+        , Restrict plutusDataHashes dataUniv :=: dataWits
+        , tempBootWits :<-: (Constr "boots" (bootWitsT p) ^$ spending ^$ tempTxBody ^$ byronAddrUniv)
+        , tempKeyWits :<-: witsVKeyTarget tempTxBody (Simple reqSignerHashes)
+        , bootWits :<-: (Constr "boots" (bootWitsT p) ^$ spending ^$ txbodyterm ^$ byronAddrUniv)
+        , keyWits :<-: witsVKeyTarget txbodyterm (Simple reqSignerHashes)
+        , langs :<-: (Constr "languages" scriptWitsLangs ^$ scriptWits)
+        , wppHash :<-: integrityHash p (pparams p) langs redeemers dataWits
+        , owed
+            :<-: ( Constr "owed" (\percent (Coin fee) -> Coin (div ((fromIntegral percent) * fee) 100))
+                    ^$ (collateralPercentage p)
+                    ^$ txfee
+                 )
+        , -- we need to add e 'extraCol' to the range of 'colInput', in the 'utxo' to pay the fee.
+          -- we arrange this so the 'extraCol' will make the 'totalCol' one more than 'owed'
+          extraCol
+            :<-: ( Constr
+                    "neededCol"
+                    ( \(Coin tot) percent (Coin fee) ->
+                        Coin (div ((fromIntegral percent * fee) - (100 * tot) + 100) 100)
+                    ) --  ^ adding 100, makes the result (Coin 1) larger.
+                    ^$ sumCol
+                    ^$ (collateralPercentage p)
+                    ^$ txfee
+                 )
+        , Member (Right colRetAddr) addrUniv
+        , -- This depends on the Coin in the TxOut being (Coin 1). The computation of 'owed' and 'extraCol" should ensure this.
+          collateralReturn p :<-: (Constr "colReturn" (\ad -> TxOutF p (mkBasicTxOut ad (inject (Coin 1)))) ^$ colRetAddr)
+        , -- We compute this, so that we can test that the (Coin 1) invariant holds.
+          colRetCoin :<-: (Constr "-" (\sumc extra owe -> (sumc <> extra) <-> owe) ^$ sumCol ^$ extraCol ^$ owed)
         ]
   where
     spending = Var (V "spending" (MapR TxInR (TxOutR p)) No)
@@ -247,30 +310,34 @@ txBodyPreds p =
         (Coin n) = totalCertsDeposits pp (`Map.member` regpools) (map unTxCertF certsx)
     txrefunds = Var (V "txrefunds" CoinR No)
     txdeposits = Var (V "txdeposits" CoinR No)
-    sumCol = Var $ V "sumCol" CoinR No
+
     utxoSize = Var (V "utxoSize" SizeR No)
     utxoTxOuts = Var (V "utxoTxOuts" (ListR (TxOutR p)) No)
     noScriptAddr = Var (V "noScriptAddr" (SetR AddrR) No)
     feeInput = Var (V "feeInput" TxInR No)
     feeAddr = Var (V "feeAddr" AddrR No)
-    colInput = var "colInput" TxInR
     preUtxo = Var (V "preUtxo" (MapR TxInR (TxOutR p)) No)
     acNeeded :: Term era [(ScriptPurpose era, ScriptHash (EraCrypto era))]
     acNeeded = Var $ V "acNeeded" (ListR (PairR (ScriptPurposeR p) ScriptHashR)) No
     neededHashSet = Var $ V "neededHashSet" (SetR ScriptHashR) No
-    partialTxBody = Var $ V "partialTxBody" (TxBodyR p) No
     rdmrPtrs = Var $ V "rdmrPtrs" (SetR RdmrPtrR) No
     plutusDataHashes = Var $ V "plutusDataHashes" (SetR DataHashR) No
+    oneAuxdata = Var $ V "oneAuxdata" (TxAuxDataR reify) No
+    tempTxFee = Var $ V "tempTxFee" CoinR No
+    tempTx = Var $ V "tempTx" (TxR p) No
+    tempTxBody = Var $ V "tempTxBody" (TxBodyR reify) No
+    tempWppHash = Var $ V "tempWppHash" (MaybeR ScriptIntegrityHashR) No
+    tempBootWits = Var $ V "tempBootWits" (SetR (BootstrapWitnessR @era)) No
+    tempKeyWits = Var $ V "tempKeyWits" (SetR (WitVKeyR reify)) No
+    langs = Var $ V "langs" (SetR LanguageR) No
 
 txBodyStage ::
-  Reflect era =>
+  (Reflect era) =>
   Proof era ->
   Subst era ->
   Gen (Subst era)
 txBodyStage proof subst0 = do
   let preds = txBodyPreds proof
-  -- (_, g) <- compileGen standardOrderInfo (map (substPred subst0) preds)
-  --  trace ("GRAPH\n" ++ show g) $
   subst <- toolChainSub proof standardOrderInfo preds subst0
   (_env, status) <- monadTyped $ checkForSoundness preds subst
   case status of
@@ -298,266 +365,50 @@ main = do
       )
   -- rewritten <- snd <$> generate (rewriteGen (1, txBodyPreds proof))
   -- putStrLn (show rewritten)
-
-  -- Adjust the Env for fee
-  env <- pure env0 -- monadTyped (fixFee env0)
-
   -- Compute the TxBody from the fixed Env
-  let txb = txBodyFromEnv proof env
-  putStrLn (show (pcTxBody proof txb))
+  env <- monadTyped $ adjustFeeInput env0
+  env1 <- monadTyped $ adjustColInput colInput sumCol extraCol env
+  displayTerm env1 txfee
+  displayTerm env1 txterm
 
   -- compute Produced and Consumed
-  certState <- monadTyped $ runTarget env dpstateT
+  (TxBodyF _ txb) <- monadTyped (findVar (unVar txbodyterm) env)
+  certState <- monadTyped $ runTarget env1 dpstateT
   (PParamsF _ ppV) <- monadTyped (findVar (unVar (pparams proof)) env)
   utxoV <- monadTyped (findVar (unVar (utxo proof)) env)
-  inputsV <- monadTyped (findVar (unVar inputs) env)
-  let inputRestriction = Map.restrictKeys utxoV inputsV
   putStrLn (show (producedTxBody txb ppV certState))
   putStrLn (show (consumedTxBody txb ppV certState (liftUTxO utxoV)))
-  let needS = getScriptsNeeded (liftUTxO utxoV) txb
-  -- putStrLn ("Needed Scripts\n" ++ show (pcScriptsNeeded proof needS))
-  gd <- monadTyped (findVar (unVar genDelegs) env)
-  -- putStrLn (how (ppMap pcKeyHash pcGenDelegPair gd))
-  let needK = witsVKeyNeeded (liftUTxO utxoV) (newTx proof [Body txb]) (GenDelegs gd)
-  -- putStrLn ("Needed keys\n"++show(ppSet pcKeyHash needK))
-  -- enter the Repl
-  -- goRepl proof env ""
-  -- displayTerm env (utxo proof)
-  -- env1 <- generate (fixCollateral proof (Coin 500) env)
-  -- displayTerm env collateral
-  -- displayTerm env (var "colUtxo" (MapR TxInR (TxOutR proof)))
-  -- displayTerm env (var "colRestriction" (MapR TxInR (TxOutR proof)))
-  -- displayTerm env (spendscriptUniv proof)
-  -- putStrLn (format (MapR TxInR (TxOutR proof)) inputRestriction)
-  txdatsV <- monadTyped (findVar (unVar txdats) env)
-  redeemersV <- monadTyped (findVar (unVar redeemers) env)
-  scriptWitsV <- monadTyped (findVar (unVar scriptWits) env)
-  let witnesses =
-        newWitnesses
-          merge
-          proof
-          [ ScriptWits (Map.map unScriptF scriptWitsV)
-          , RdmrWits (Redeemers redeemersV)
-          , DataWits (TxDats txdatsV)
-          ]
-  putStrLn (show (pcWitnesses proof witnesses))
-  goRepl proof env ""
 
-{-
--- ===================================================
--- At some point we will need to move this to the Tx preds
--- since the witnesses for Plutus scripts have Costs which
--- are added to the fee. And the witnesses are in the Tx, not
--- the TxBody.
+  goRepl proof env1 ""
 
--- | This term is set as part of the UTxO in the DState Preds
---   It refers to the key in the UTxO, used to pay the fee.
---   Using it, the fee is counted in both sides of the
---   Produced == Consumed computation. As the fee will
---   appear in the 'feeInput' entry in the UTxO and in
---   the 'txfee' field of the TxBody
--- E.g. Produced(Outputs 231, Fees 1343979, Deposits 0) = 1344210
---                            ^ from the 'txfee'
---      Consumed(Inputs 1344183, Refunds 27, Withdrawals 0) = 1344210
---               ^ includes amount from the 'feeInput' of the 'utxo'
-feeInput :: Term era (TxIn (EraCrypto era))
-feeInput = var "feeInput" TxInR
+-- ================================================
+-- Auxiliary functions and Targets
 
--- | Adjust the Env to get the right amout for the fee.
---   We need to adjust the 'utxo' and the 'txfee' variables
---   in the Env. We compute the right amount using 'setMinFeeTx'
-fixFee :: Reflect era => Env era -> Typed (Env era)
-fixFee env = do
-  let proof = reify
-  let txb = txBodyFromEnv proof env
-  PParamsF _ ppV <- monadTyped (findVar (unVar (pparams proof)) env)
-  feeTxIn <- monadTyped (findVar (unVar feeInput) env)
-  colTxIn <- monadTyped (findVar (unVar colInput) env)
-  let actualfee = (setMinFeeTx ppV (newTx proof [Body txb])) ^. (bodyTxL . feeTxBodyL)
-  utxo0 <-
-    -- trace ("\nTHERE\nfeeTxIn " ++ show (pcTxIn feeTxIn) ++ "\ncolTxIn" ++ show (pcTxIn colTxIn)) $
-      monadTyped (findVar (unVar (utxo proof)) env)
-
-  let utxo1 = fixTxInput feeTxIn actualfee utxo0
-      utxo2 = fixTxInput colTxIn actualfee utxo1
-      !env1 = storeVar (unVar txfee) actualfee env
-      !env2 = storeVar (unVar (utxo proof)) utxo2 env1
-  pure env2
-
-fixTxInput ::
-  (Reflect era) =>
-  TxIn (EraCrypto era) ->
-  Coin ->
-  Map (TxIn (EraCrypto era)) (TxOutF era) ->
-  Map (TxIn (EraCrypto era)) (TxOutF era)
-fixTxInput k c m = Map.adjust (\(TxOutF p x) -> TxOutF p (x & coinTxOutL .~ c)) k m
-
--- ========================================
-
-bab :: Proof (BabbageEra StandardCrypto)
-bab = Babbage Standard
-
-{-
-Alonzo
---  Compared to pre-Alonzo eras, we additionally gather the certificates
---  required to authenticate collateral witnesses.
-witsVKeyNeeded ::
-  forall era.
-  (EraTx era, AlonzoEraTxBody era) =>
-  UTxO era ->
-  Tx era ->
-  GenDelegs (EraCrypto era) ->
-  Set (KeyHash 'Witness (EraCrypto era))
-witsVKeyNeeded utxo' tx genDelegs =
-
-Shelley
--- | Collect the set of hashes of keys that needs to sign a
---  given transaction. This set consists of the txin owners,
---  certificate authors, and withdrawal reward accounts.
-witsVKeyNeeded ::
-  forall era.
-  ( EraTx era
-  , ShelleyEraTxBody era
-  , ProtVerAtMost era 8
-  ) =>
-  UTxO era ->
-  Tx era ->
-  GenDelegs (EraCrypto era) ->
-  Set (KeyHash 'Witness (EraCrypto era))
--}
-
-proof0 =  Conway Standard
-
-mkEnv =  generate
-      ( pure []
-          >>= pParamsStage proof0
-          >>= universeStage proof0
-      --    >>= vstateStage proof0
-      --    >>= pstateStage proof0
-      --    >>= dstateStage proof0
-      --    >>= certsStage proof0
-      --    >>= (\subst -> monadTyped $ substToEnv subst emptyEnv)
-      )
-
-subst0 = unsafePerformIO mkEnv
-
-preds0 = map (substPred subst0)
-       [ -- MetaSize (SzRng 8 8) utxoSize -- must be bigger than sum of (maxsize inputs) and (mazsize collateral)
-         Sized (Range 8 8) (utxo proof0)
-       , Member (Left feeTxOut) (Rng (utxo proof0))
-       , MapMember feeTxIn feeTxOut (Right (utxo proof0))
-       ]
-
--- outputCoinL :: Reflect era => Lens' (TxOutF era) Coin
-
-{- We compute the fee, and fixup the transaction as follows
-1) Compute the needed fee (say 241)
-2) We know there is at least one input (feeTxIn) with enough money to pay the fee.
-3) We have computed a balanced TxBody
-   Produced(Outputs 2000231, Fees 0, Deposits 10) = 2000241
-   Consumed(Inputs 2000234, Refunds 0, Withdrawals 7) = 2000241
-4) We move the fee amount (241) from outputs to fee, So things still balance
-   Produced(Outputs 1999990, Fees 241, Deposits 10) = 2000241
-   Consumed(Inputs 2000234, Refunds 0, Withdrawals 7) = 2000241
-   This means changing the bindings for 'outputs' and 'txfee'
-5) We fix the collateral (which play no part in the balancing)
-   to have enough money. This means changing the bindings for 'utxo'
-   sum(collateral) >= fee * collpercent
--}
-
-balanceMap :: Ord k => [(k,Coin)] -> Map k t -> Lens' t Coin -> Map k t
-balanceMap pairs m0 l = foldl' accum m0 pairs
-  where accum m (k,coin) = Map.adjust (\ t -> t & l .~ coin) k m
-
-fixCollateral :: Reflect era => Proof era -> Coin -> Env era -> Gen (Env era)
-fixCollateral p coin env = do
-  col <- monadTyped (findVar (unVar collateral) env)
-  u <- monadTyped (findVar (unVar (utxo p)) env)
-  let n = Set.size col
-  coins <- partitionCoin (Coin 1) [] n coin
-  let utxo' = balanceMap (zip (Set.toList col) coins) u outputCoinL
-  pure $ storeVar (unVar (utxo p)) utxo' env
-
--}
-
-{-
-inputs :: Term era (Set.Set (TxIn (EraCrypto era)))
-
-withdrawals
-  :: Term
-       era (Map (Cardano.Ledger.Address.RewardAcnt (EraCrypto era)) Coin)
-ghci> :t certs
-certs :: Reflect era => Term era [TxCertF era]
-ghci> :t mint
-mint
-  :: Term
-       era
-       (Map
-          (Cardano.Ledger.Hashes.ScriptHash (EraCrypto era))
-          (Map Cardano.Ledger.Mary.Value.AssetName Integer))
-
-needed
-  :: Set.Set (TxIn (EraCrypto era))
-     -> Map (Cardano.Ledger.Address.RewardAcnt (EraCrypto era)) Coin
-     -> [TxCertF era]
-     -> Map
-          (Cardano.Ledger.Hashes.ScriptHash (EraCrypto era))
-          (Map Cardano.Ledger.Mary.Value.AssetName Integer)
-     -> [TxBodyField era]
-
--}
-
--- needed inputs withdrawals certs mint
-
-neededT ::
-  EraUTxO era =>
-  Proof era ->
-  Target
-    era
-    ( Set.Set (TxIn (EraCrypto era)) ->
-      Map (RewardAcnt (EraCrypto era)) Coin ->
-      [TxCertF era] ->
-      Map
-        (ScriptHash (EraCrypto era))
-        (Map AssetName Integer) ->
-      Map (TxIn (EraCrypto era)) (TxOutF era) ->
-      ScriptsNeededF era
-    )
-neededT proof = Constr "neededScripts" (needed proof)
+computeFinalTx :: EraTx era => PParamsF era -> TxF era -> TxF era
+computeFinalTx (PParamsF _ ppV) (TxF p txV) = TxF p newtx
   where
-    needed p is ws cs ms ut = ScriptsNeededF p (getScriptsNeeded (liftUTxO ut) txbody)
-      where
-        bodyFields =
-          [ Inputs is
-          , Certs' (map unTxCertF cs)
-          , Withdrawals' (Withdrawals ws)
-          , Mint (liftMultiAsset ms)
-          ]
-        txbody = newTxBody p bodyFields
+    newtx = setMinFeeTx ppV txV
 
--- | Constuct a partial TxBody, that has enough information (Certs,Inputs,Withdrawals,Mint)
---   to compute RdmrPtrs and NeededScripts.
-partialTxBodyT ::
-  EraTxBody era =>
-  Proof era ->
-  Target
-    era
-    ( Set.Set (TxIn (EraCrypto era)) ->
-      Map (RewardAcnt (EraCrypto era)) Coin ->
-      [TxCertF era] ->
-      Map (ScriptHash (EraCrypto era)) (Map AssetName Integer) ->
-      TxBodyF era
-    )
-partialTxBodyT proof = Constr "partialTxBody" makeBody
+computeFinalFee :: EraTx era => PParamsF era -> TxF era -> Coin
+computeFinalFee (PParamsF _ ppV) (TxF _ txV) = newtx ^. (bodyTxL . feeTxBodyL)
   where
-    makeBody is ws cs ms = TxBodyF proof (newTxBody proof bodyFields)
-      where
-        bodyFields =
-          [ Inputs is
-          , Certs' (map unTxCertF cs)
-          , Withdrawals' (Withdrawals ws)
-          , Mint (liftMultiAsset ms)
-          ]
+    newtx = setMinFeeTx ppV txV
+
+integrityHash ::
+  Era era1 =>
+  Proof era1 ->
+  Term era2 (PParamsF era1) ->
+  Term era2 (Set Language) ->
+  Term era2 (Map RdmrPtr (Data era1, ExUnits)) ->
+  Term era2 (Map (DataHash (EraCrypto era1)) (Data era1)) ->
+  Target era2 (Maybe (ScriptIntegrityHash (EraCrypto era1)))
+integrityHash p pp langs rs ds = (Constr "integrityHash" hashfun ^$ pp ^$ langs ^$ rs ^$ ds)
+  where
+    hashfun (PParamsF _ ppp) ls r d =
+      strictMaybeToMaybe $ newScriptIntegrityHash p ppp (Set.toList ls) (Redeemers r) (TxDats d)
+
+txFL :: Lens' (TxF era) (Tx era)
+txFL = lens (\(TxF _ x) -> x) (\(TxF p _) x -> TxF p x)
 
 -- | "Construct the Needed Scripts from the UTxO and the partial TxBody
 needT ::
@@ -571,7 +422,7 @@ needT ::
     )
 needT proof = Constr "neededScripts" (needed proof)
   where
-    needed p (TxBodyF _ txbody) ut = ScriptsNeededF p (getScriptsNeeded (liftUTxO ut) txbody)
+    needed p (TxBodyF _ txbodyV) ut = ScriptsNeededF p (getScriptsNeeded (liftUTxO ut) txbodyV)
 
 rdmrPtrsT ::
   MaryEraTxBody era =>
@@ -580,7 +431,7 @@ rdmrPtrsT ::
     ( TxBodyF era ->
       [((ScriptPurpose era), (ScriptHash (EraCrypto era)))] ->
       Map (ScriptHash (EraCrypto era)) any ->
-      Set.Set RdmrPtr
+      Set RdmrPtr
     )
 rdmrPtrsT = Constr "getRdmrPtrs" getRdmrPtrs
 
@@ -589,21 +440,169 @@ getRdmrPtrs ::
   TxBodyF era ->
   [((ScriptPurpose era), (ScriptHash (EraCrypto era)))] ->
   Map (ScriptHash (EraCrypto era)) any ->
-  Set.Set RdmrPtr
-getRdmrPtrs (TxBodyF _ txbody) xs allplutus = List.foldl' accum Set.empty xs
+  Set RdmrPtr
+getRdmrPtrs (TxBodyF _ txbodyV) xs allplutus = List.foldl' accum Set.empty xs
   where
-    accum ans (sp, hash) = case (rdptr txbody sp, Map.member hash allplutus) of
+    accum ans (sp, hash) = case (rdptr txbodyV sp, Map.member hash allplutus) of
       (SJust x, True) -> Set.insert x ans
       _ -> ans
 
 sndL :: Lens' (a, b) b
 sndL = lens snd (\(x, _) y -> (x, y))
 
+fstL :: Lens' (a, b) a
+fstL = lens fst (\(_, y) x -> (x, y))
+
 getPlutusDataHashes ::
   (AlonzoEraTxOut era, EraTxBody era, EraScript era) =>
   Map (TxIn (EraCrypto era)) (TxOutF era) ->
   TxBodyF era ->
   Map (ScriptHash (EraCrypto era)) (ScriptF era) ->
-  Set.Set (DataHash (EraCrypto era))
-getPlutusDataHashes ut (TxBodyF _ txbody) m =
-  fst $ getInputDataHashesTxBody (liftUTxO ut) txbody (Map.map unScriptF m)
+  Set (DataHash (EraCrypto era))
+getPlutusDataHashes ut (TxBodyF _ txbodyV) m =
+  fst $ getInputDataHashesTxBody (liftUTxO ut) txbodyV (Map.map unScriptF m)
+
+bootWitsT ::
+  forall era.
+  (EraTxOut era) =>
+  Proof era ->
+  Map (TxIn (EraCrypto era)) (TxOutF era) ->
+  TxBodyF era ->
+  Map (KeyHash 'Payment (EraCrypto era)) (Addr (EraCrypto era), SigningKey) ->
+  Set (BootstrapWitness (EraCrypto era))
+bootWitsT proof spend (TxBodyF _ txb) byronUniv =
+  case getCrypto proof of
+    Mock -> error "Can only use StandardCrypto in bootWitsT"
+    Standard -> bootWitness h boots byronUniv
+      where
+        boots :: [BootstrapAddress (EraCrypto era)] -- Not every Addr has a BootStrapAddress
+        boots = Map.foldl' accum [] spend -- Compute a list of them.
+          where
+            accum ans (TxOutF _ out) = case out ^. addrTxOutL of
+              AddrBootstrap b -> b : ans
+              _ -> ans
+        h = hashBody proof txb
+
+hashBody :: forall era. Proof era -> TxBody era -> Hash (EraCrypto era) EraIndependentTxBody
+hashBody (Shelley _) txb = extractHash @(EraCrypto era) (hashAnnotated txb)
+hashBody (Allegra _) txb = extractHash @(EraCrypto era) (hashAnnotated txb)
+hashBody (Mary _) txb = extractHash @(EraCrypto era) (hashAnnotated txb)
+hashBody (Alonzo _) txb = extractHash @(EraCrypto era) (hashAnnotated txb)
+hashBody (Babbage _) txb = extractHash @(EraCrypto era) (hashAnnotated txb)
+hashBody (Conway _) txb = extractHash @(EraCrypto era) (hashAnnotated txb)
+
+-- =======================================
+
+-- | Compute the needed key witnesses from a transaction body.
+--   First find all the key hashes from every use of keys in the transaction
+--   Then find the KeyPair's associated with those hashes, then
+--   using the hash of the TxBody, turn the KeyPair into a witness.
+--   In Eras Shelley to Mary, 'reqsigners' should be empty. In Eras Alonzo to Conway
+--   we will need to add the witnesses for the required signer hashes, so they are
+--   passed in. To compute the witnsses we need the hash of the TxBody. We will call this function
+--   twice. Once when we have constructed the 'tempTxBody' used to estimate the fee, and a second time
+--   with 'txBodyTerm' where the fee is correct.
+computeWitsVKey ::
+  forall era.
+  (Reflect era) =>
+  TxBodyF era ->
+  Map (TxIn (EraCrypto era)) (TxOutF era) ->
+  Map (KeyHash 'Genesis (EraCrypto era)) (GenDelegPair (EraCrypto era)) ->
+  Map (KeyHash 'Witness (EraCrypto era)) (KeyPair 'Witness (EraCrypto era)) ->
+  Set (KeyHash 'Witness (EraCrypto era)) -> -- Only in Eras Alonzo To Conway,
+  Set (WitVKey 'Witness (EraCrypto era))
+computeWitsVKey (TxBodyF _ txb) u gd keyUniv reqsigners = keywits
+  where
+    bodyhash :: SafeHash (EraCrypto era) EraIndependentTxBody
+    bodyhash = hashAnnotated txb
+    keyhashes :: Set (KeyHash 'Witness (EraCrypto era))
+    keyhashes = Set.union (witsVKeyNeededFromBody (liftUTxO u) txb (GenDelegs gd)) reqsigners
+    keywits :: Set (WitVKey 'Witness (EraCrypto era))
+    keywits = Set.foldl' accum Set.empty keyhashes
+      where
+        accum ans hash = case Map.lookup hash keyUniv of
+          Nothing -> ans
+          Just keypair -> Set.insert (mkWitnessVKey bodyhash keypair) ans
+
+witsVKeyTarget ::
+  Reflect era =>
+  Term era (TxBodyF era) ->
+  Target era (Set (KeyHash 'Witness (EraCrypto era))) ->
+  Target era (Set (WitVKey 'Witness (EraCrypto era)))
+witsVKeyTarget txbodyparam reqSignersTarget =
+  ( Constr "keywits" computeWitsVKey
+      ^$ txbodyparam
+      ^$ (utxo reify)
+      ^$ genDelegs
+      ^$ keymapUniv
+      :$ reqSignersTarget
+  )
+
+allValid :: [IsValid] -> IsValid
+allValid xs = IsValid (all valid xs)
+  where
+    valid (IsValid b) = b
+
+scriptWitsLangs :: Map k (ScriptF era) -> Set Language
+scriptWitsLangs m = Map.foldl' accum Set.empty m
+  where
+    accum :: Set Language -> ScriptF era -> Set Language
+    accum ans (ScriptF (Alonzo _) (PlutusScript l _)) = Set.insert l ans
+    accum ans (ScriptF (Babbage _) (PlutusScript l _)) = Set.insert l ans
+    accum ans (ScriptF (Conway _) (PlutusScript l _)) = Set.insert l ans
+    accum ans _ = ans
+
+-- ===============================================================
+
+balanceMap :: Ord k => [(k, Coin)] -> Map k t -> Lens' t Coin -> Map k t
+balanceMap pairs m0 l = List.foldl' accum m0 pairs
+  where
+    accum m (k, thecoin) = Map.adjust (\t -> t & l .~ (thecoin <> t ^. l)) k m
+
+-- | Adjust the Coin part of the TxOut in the 'utxo' map for the TxIn 'feeTxIn' by adding 'txfee'
+adjustFeeInput :: Reflect era => Env era -> Typed (Env era)
+adjustFeeInput env = case utxo reify of
+  u@(Var utxoV) -> do
+    feeinput <- runTerm env feeTxIn
+    feecoin <- runTerm env txfee
+    utxomap <- runTerm env u
+    pure (storeVar utxoV (balanceMap [(feeinput, feecoin)] utxomap outputCoinL) env)
+  other -> failT ["utxo does not match a Var Term: " ++ show other]
+
+-- | Adjust UTxO image of 'collateral' to pay for the collateral fees. Do this by
+--   adding 'extraCol' to the TxOut associated with 'colInput'
+adjustColInput ::
+  Reflect era =>
+  Term era (TxIn (EraCrypto era)) ->
+  Term era Coin ->
+  Term era Coin ->
+  Env era ->
+  Typed (Env era)
+adjustColInput colInputt sumColt extraColt env = case (utxo reify) of
+  u@(Var utxoV) -> do
+    colinput <- runTerm env colInputt
+    extracoin <- runTerm env extraColt
+    utxomap <- runTerm env u
+    let env2 = storeVar utxoV (balanceMap [(colinput, extracoin)] utxomap outputCoinL) env
+        adjust (Just x) y = Just (x <> y)
+        adjust Nothing _ = Nothing
+    env3 <- updateVar (<>) sumColt extraColt env2
+    env4 <- updateVar adjust totalCol extraColt env3
+    pure env4
+  other -> failT ["utxo does not match a Var Term: " ++ show other]
+
+updateVar :: (a -> b -> a) -> Term era a -> Term era b -> Env era -> Typed (Env era)
+updateVar adjust term@(Var v) delta env = do
+  varV <- runTerm env term
+  deltaV <- runTerm env delta
+  pure $ storeVar v (adjust varV deltaV) env
+updateVar _ v _ _ = failT ["Non Var in updateVar: " ++ show v]
+
+colRetAddr :: Term era (Addr (EraCrypto era))
+colRetAddr = Var $ V "colRetAddr" AddrR No
+
+colRetCoin :: Term era Coin
+colRetCoin = Var $ V "colRetCoin" CoinR No
+
+colTxOutT :: forall era. Reflect era => Proof era -> Target era (TxOutF era)
+colTxOutT p = Constr "colReturn" (\c ad -> TxOutF p (mkBasicTxOut ad (inject c))) ^$ colRetCoin ^$ colRetAddr

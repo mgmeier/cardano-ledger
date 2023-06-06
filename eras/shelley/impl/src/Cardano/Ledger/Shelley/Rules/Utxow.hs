@@ -33,6 +33,7 @@ module Cardano.Ledger.Shelley.Rules.Utxow (
   validateNeededWitnesses,
   propWits,
   witsVKeyNeeded,
+  witsVKeyNeededFromBody,
 )
 where
 
@@ -472,14 +473,22 @@ witsVKeyNeeded ::
   Tx era ->
   GenDelegs (EraCrypto era) ->
   Set (KeyHash 'Witness (EraCrypto era))
-witsVKeyNeeded utxo' tx genDelegs =
+witsVKeyNeeded utxo' tx genDelegs = witsVKeyNeededFromBody utxo' (tx ^. bodyTxL) genDelegs
+
+witsVKeyNeededFromBody ::
+  forall era.
+  (EraTx era, ShelleyEraTxBody era) =>
+  UTxO era ->
+  TxBody era ->
+  GenDelegs (EraCrypto era) ->
+  Set (KeyHash 'Witness (EraCrypto era))
+witsVKeyNeededFromBody utxo' txBody genDelegs =
   certAuthors
     `Set.union` inputAuthors
     `Set.union` owners
     `Set.union` wdrlAuthors
     `Set.union` updateKeys
   where
-    txBody = tx ^. bodyTxL
     inputAuthors :: Set (KeyHash 'Witness (EraCrypto era))
     inputAuthors = foldr' accum Set.empty (txBody ^. allInputsTxBodyF)
       where

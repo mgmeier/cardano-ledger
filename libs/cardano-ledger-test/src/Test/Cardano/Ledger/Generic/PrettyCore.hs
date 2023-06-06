@@ -56,6 +56,7 @@ import Cardano.Ledger.Keys (
   VKey (..),
   hashKey,
  )
+import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness (..))
 import Cardano.Ledger.Mary.Value (AssetName (..), MaryValue (..), MultiAsset (..), PolicyID (..), flattenMultiAsset)
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..), PoolDistr (..))
 import Cardano.Ledger.Pretty
@@ -1509,8 +1510,8 @@ pcTxField proof x = case x of
 
 pcWitnessesField :: forall era. Reflect era => Proof era -> WitnessesField era -> [(Text, PDoc)]
 pcWitnessesField proof x = case x of
-  AddrWits set -> [("key wits", ppSet (pcWitVKey @era) set)]
-  BootWits _ -> [("boot wits", ppString "BOOTWITS")]
+  AddrWits set -> [("key wits", ppSet (pcWitVKey proof) set)]
+  BootWits bwits -> [("boot wits", ppSet (\z -> ppVKey (bwKey z)) bwits)]
   ScriptWits mp -> [("script wits", ppMap pcScriptHash (pcScript proof) mp)]
   DataWits (TxDats m) -> [("data wits", ppMap pcDataHash pcData m)]
   RdmrWits (Redeemers m) ->
@@ -1519,8 +1520,8 @@ pcWitnessesField proof x = case x of
 pcPair :: (t1 -> PDoc) -> (t2 -> PDoc) -> (t1, t2) -> PDoc
 pcPair pp1 pp2 (x, y) = parens (hsep [pp1 x, ppString ",", pp2 y])
 
-pcWitVKey :: (Reflect era, Typeable discriminator) => WitVKey discriminator (EraCrypto era) -> PDoc
-pcWitVKey (WitVKey vk@(VKey x) sig) = ppSexp "WitVKey" [ppString keystring, ppString (drop 12 sigstring), hash]
+pcWitVKey :: (Reflect era, Typeable keyrole) => Proof era -> WitVKey keyrole (EraCrypto era) -> PDoc
+pcWitVKey _p (WitVKey vk@(VKey x) sig) = ppSexp "WitVKey" [ppString keystring, ppString (drop 12 sigstring), hash]
   where
     keystring = show x
     hash = pcKeyHash (hashKey vk)
@@ -1610,7 +1611,7 @@ pcVState (VState dreps hotkeys) =
   ppRecord
     "VState"
     [ ("dReps", ppSet pcCredential dreps)
-    , ("hotKeys", ppMap pcKeyHash pcKeyHash hotkeys)
+    , ("hotKeys", ppMap pcKeyHash (ppMaybe pcKeyHash) hotkeys)
     ]
 
 instance Reflect era => PrettyC (LedgerState era) era where prettyC = pcLedgerState
@@ -1794,7 +1795,7 @@ pcAssetName x = trim (viaShow x)
 pcMultiAsset :: MultiAsset c -> PDoc
 pcMultiAsset m = ppList pptriple (flattenMultiAsset m)
   where
-    pptriple (i, asset, num) = hsep [pcPolicyID i, pcAssetName asset, ppInteger num]
+    pptriple (i, asset, num) = hsep ["(", pcPolicyID i, pcAssetName asset, ppInteger num, ")"]
 
 pcScriptPurpose :: Proof era -> ScriptPurpose era -> PDoc
 pcScriptPurpose _ (Minting policy) = ppSexp "Minting" [pcPolicyID policy]
