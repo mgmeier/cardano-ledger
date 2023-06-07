@@ -35,11 +35,9 @@ import Lens.Micro hiding (set)
 import Test.Cardano.Ledger.Constrained.Ast (Pred (..), Sum (..), Term (..), runPred)
 import Test.Cardano.Ledger.Constrained.Classes (
   Adds (..),
-  Sums (..),
   genFromAddsSpec,
   genFromNonNegAddsSpec,
   lensAdds,
-  projAdds,
   sumAdds,
  )
 import Test.Cardano.Ledger.Constrained.Combinators (
@@ -75,8 +73,6 @@ import Test.Cardano.Ledger.Constrained.TypeRep (
   format,
   genRep,
   synopsis,
-  testEql,
-  (:~:) (Refl),
  )
 import Test.Cardano.Ledger.Core.Arbitrary ()
 import Test.Cardano.Ledger.Generic.Proof (BabbageEra, Standard)
@@ -683,7 +679,7 @@ data RngSpec era rng where
     Size -> -- the sum of all the elements must fall in the range denoted by the Size
     RngSpec era rng
   RngProj ::
-    (Adds c) =>
+    Adds c =>
     c -> -- the smallest element in the partition (usually 0 or 1)
     Rep era x ->
     Lens' x c ->
@@ -825,18 +821,6 @@ runRngSpec ll (RngRel rspec) = runRelSpec (Set.fromList ll) rspec
 
 -- ------------------------------------------
 -- generators for RngSpec
-
-instance Sums Word64 Coin where
-  getSum n = Coin $ fromIntegral n
-  genT _ (Coin n) = pure (fromIntegral n)
-
-instance Sums Int DeltaCoin where
-  getSum n = DeltaCoin $ fromIntegral n
-  genT _ (DeltaCoin n) = pure (fromIntegral n)
-
-instance Sums Coin Word64 where
-  getSum (Coin n) = fromIntegral n
-  genT _ n = pure (Coin (fromIntegral n))
 
 genConsistentRngSpec ::
   (Ord w, Adds w) =>
@@ -1414,9 +1398,10 @@ data ElemSpec era t where
   -- | The range must sum upto 'c', which is any number in the scope of Size,
   --   through the projection witnessed by the (Sums t c) class
   ElemProj ::
-    Sums x c =>
+    Adds c =>
     c -> -- The smallest allowed
-    Rep era c ->
+    Rep era x ->
+    Lens' x c ->
     Size ->
     ElemSpec era x
   -- | The range has exactly these elements
@@ -1443,7 +1428,7 @@ instance LiftT (ElemSpec era t) where
 
 showElemSpec :: ElemSpec era a -> String
 showElemSpec (ElemSum small sz) = sepsP ["ElemSum", show small, show sz]
-showElemSpec (ElemProj small r sz) = sepsP ["ElemProj", show small, show r, show sz]
+showElemSpec (ElemProj small r _l sz) = sepsP ["ElemProj", show small, show r, show sz]
 showElemSpec (ElemEqual r xs) = sepsP ["ElemEqual", show r, synopsis (ListR r) xs]
 showElemSpec (ElemNever _) = "ElemNever"
 showElemSpec ElemAny = "ElemAny"
@@ -1482,15 +1467,18 @@ mergeElemSpec a@(ElemEqual _ xs) b@(ElemSum _ sz) =
 mergeElemSpec b@(ElemSum _ _) a@(ElemEqual _ _) = mergeElemSpec a b
 mergeElemSpec a@(ElemSum sm1 sz1) b@(ElemSum sm2 sz2) =
   case sz1 <> sz2 of
-    SzNever xs -> ElemNever ((sepsP ["The ElemSpec's are inconsistent.", show a, show b]) : xs)
+    SzNever xs -> ElemNever (sepsP ["The ElemSpec's are inconsistent.", show a, show b] : xs)
     sz3 -> ElemSum (smallerOf sm1 sm2) sz3
-mergeElemSpec a@(ElemProj sm1 r1 sz1) b@(ElemProj sm2 r2 sz2) =
-  case testEql r1 r2 of
-    Just Refl ->
-      case sz1 <> sz2 of
-        SzNever xs -> ElemNever ((sepsP ["The ElemSpec's are inconsistent.", show a, show b]) : xs)
-        sz3 -> ElemProj (smallerOf sm1 sm2) r1 sz3
-    Nothing -> ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
+-- mergeElemSpec a@(ElemProj sm1 r1 l1 sz1) b@(ElemProj sm2 r2 l2 sz2) =
+--   case testEql r1 r2 of
+--     Just Refl ->
+--       case sz1 <> sz2 of
+--         SzNever xs -> ElemNever (sepsP ["The ElemSpec's are inconsistent.", show a, show b] : xs)
+--         sz3 ->
+--           if l1 == l2
+--             then ElemProj (smallerOf sm1 sm2) r1 l1 sz3
+--             else ElemNever ["The lenses for ElemProj are inconsistent", " " <> show a, " " <> show b]
+--     Nothing -> ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
 mergeElemSpec a b = ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
 
 sizeForElemSpec :: forall a era. ElemSpec era a -> Size
@@ -1501,7 +1489,7 @@ sizeForElemSpec (ElemSum smallest sz) =
   if toI smallest > 0
     then SzRng 1 (minSize sz `div` toI smallest)
     else SzLeast 1
-sizeForElemSpec (ElemProj smallest (_r :: (Rep era c)) sz) =
+sizeForElemSpec (ElemProj smallest (_r :: (Rep era c)) _l sz) =
   if toI smallest > 0
     then SzRng 1 (minSize sz `div` toI smallest)
     else SzLeast 1
@@ -1512,16 +1500,17 @@ runElemSpec xs spec = case spec of
   ElemAny -> True
   ElemEqual _ ys -> xs == ys
   ElemSum _ sz -> runSize (toI (sumAdds xs)) sz
-  ElemProj _ _ sz -> runSize (toI (projAdds xs)) sz
+  ElemProj _ _ l sz -> runSize (toI (lensAdds l xs)) sz
 
 genElemSpec ::
-  forall w c era.
-  (Adds w, Sums w c, Era era) =>
+  forall w era.
+  (Adds w, Era era) =>
   Rep era w ->
-  Rep era c ->
+  -- Rep era c ->
+  SomeLens era w ->
   Size ->
   Gen (ElemSpec era w)
-genElemSpec repw repc siz = do
+genElemSpec repw (SomeLens (l :: Lens' w c)) siz = do
   let lo = minSize siz
       hi = maxSize siz
   if lo >= 1
@@ -1539,7 +1528,7 @@ genElemSpec repw repc siz = do
           , do
               smallest <- genSmall @c
               sz <- genBigSize (max 1 (smallest * hi))
-              pure (ElemProj (fromI ["genRngSpec " ++ show siz] smallest) repc sz)
+              pure (ElemProj (fromI ["genRngSpec " ++ show siz] smallest) repw l sz)
           )
         , (2, ElemEqual repw <$> do n <- genFromSize siz; vectorOf n (genRep repw))
         , (1, pure ElemAny)
@@ -1552,6 +1541,7 @@ genElemSpec repw repc siz = do
 
 genFromElemSpec ::
   forall era r.
+  Era era =>
   [String] ->
   Gen r ->
   Int ->
@@ -1564,18 +1554,18 @@ genFromElemSpec msgs genr n x = case x of
   (ElemSum small sz) -> do
     tot <- genFromIntRange sz
     partition small msgs n (fromI (msg : msgs) tot)
-  (ElemProj small _ sz) -> do
+  (ElemProj small xrep l sz) -> do
     tot <- genFromIntRange sz
     rs <- partition small msgs n (fromI (msg : msgs) tot)
-    mapM (genT msgs) rs
+    mapM (\r -> do ans <- genRep xrep; pure (ans & l .~ r)) rs
   where
     msg = "genFromElemSpec " ++ show n ++ " " ++ show x
 
 manyMergeElemSpec :: Gen (Size, Int, [String])
 manyMergeElemSpec = do
   size <- genSize
-  xs <- vectorOf 40 (genElemSpec Word64R CoinR size)
-  ys <- vectorOf 40 (genElemSpec Word64R CoinR size)
+  xs <- vectorOf 40 (genElemSpec Word64R (SomeLens word64CoinL) size)
+  ys <- vectorOf 40 (genElemSpec Word64R (SomeLens word64CoinL) size)
   let check (x, y, m) = do
         let msize = sizeForElemSpec m
         i <- genFromSize msize
@@ -1677,18 +1667,20 @@ runListSpec xs spec = case spec of
   ListSpec sx es -> runSize (length xs) sx && runElemSpec xs es
 
 genListSpec ::
-  forall w c era.
-  (Adds w, Sums w c, Era era) =>
+  forall w era.
+  (Adds w, Era era) =>
   Rep era w ->
-  Rep era c ->
+  -- Rep era c ->
+  SomeLens era w ->
   Size ->
   Gen (ListSpec era w)
-genListSpec repw repc size = do
-  e <- genElemSpec repw repc size
+genListSpec repw l size = do
+  e <- genElemSpec repw l size
   pure (ListSpec size e)
 
 genFromListSpec ::
   forall era r.
+  Era era =>
   [String] ->
   Gen r ->
   ListSpec era r ->
@@ -1703,7 +1695,7 @@ genFromListSpec msgs genr (ListSpec size e) = do
 testSoundElemSpec :: Gen Property
 testSoundElemSpec = do
   size <- genSize
-  spec <- genElemSpec Word64R CoinR size
+  spec <- genElemSpec Word64R (SomeLens word64CoinL) size
   n <- genFromSize size
   list <- genFromElemSpec @TT ["testSoundElemSpec " ++ show spec ++ " " ++ show n] (choose (1, 1000)) n spec
   pure $
@@ -1714,7 +1706,7 @@ testSoundElemSpec = do
 testSoundListSpec :: Gen Property
 testSoundListSpec = do
   size <- genSize
-  spec <- genListSpec Word64R CoinR size
+  spec <- genListSpec Word64R (SomeLens word64CoinL) size
   list <- genFromListSpec @TT ["testSoundListSpec"] (choose (1, 1000)) spec
   pure $
     counterexample
@@ -1724,8 +1716,8 @@ testSoundListSpec = do
 manyMergeListSpec :: Gen (Size, Int, [String])
 manyMergeListSpec = do
   size <- genSize
-  xs <- vectorOf 40 (genListSpec Word64R CoinR size)
-  ys <- vectorOf 40 (genListSpec Word64R CoinR size)
+  xs <- vectorOf 40 (genListSpec Word64R (SomeLens word64CoinL) size)
+  ys <- vectorOf 40 (genListSpec Word64R (SomeLens word64CoinL) size)
   let check (x, y, m) = do
         let msize = sizeForListSpec m
         i <- genFromSize msize
@@ -1824,7 +1816,7 @@ testm = do
   monadTyped (liftT (a <> b))
 
 aList :: Era era => Gen (ListSpec era Word64)
-aList = genSize >>= genListSpec Word64R CoinR
+aList = genSize >>= genListSpec Word64R (SomeLens word64CoinL)
 
 testl :: Gen (ListSpec TT Word64)
 testl = do

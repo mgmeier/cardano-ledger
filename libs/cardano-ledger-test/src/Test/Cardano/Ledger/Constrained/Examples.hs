@@ -2,13 +2,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -18,7 +15,6 @@ import Cardano.Ledger.CertState (FutureGenDeleg (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Era (Era (EraCrypto))
 import Cardano.Ledger.Keys (GenDelegPair)
-import Cardano.Ledger.Shelley.Rewards (Reward (..))
 import Control.Exception (ErrorCall (..))
 import Control.Monad (when)
 import qualified Data.List as List
@@ -27,7 +23,6 @@ import Data.Ratio ((%))
 import qualified Data.Set as Set
 import Debug.Trace (trace)
 import Test.Cardano.Ledger.Constrained.Ast
-import Test.Cardano.Ledger.Constrained.Classes (Adds (..), Sums (genT))
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Lenses (fGenDelegGenKeyHashL)
 import Test.Cardano.Ledger.Constrained.Monad
@@ -39,7 +34,7 @@ import Test.Cardano.Ledger.Constrained.Tests (prop_shrinking, prop_soundness)
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars
 import Test.Cardano.Ledger.Generic.PrettyCore (PrettyC (..))
-import Test.Cardano.Ledger.Generic.Proof (Reflect (..), Standard)
+import Test.Cardano.Ledger.Generic.Proof (Reflect (..))
 import Test.Hspec (shouldThrow)
 import Test.QuickCheck hiding (Fixed, total)
 
@@ -136,16 +131,13 @@ failn proof message loud order cs target = do
         result <- generate (genMaybeCounterExample proof message loud order cs target)
         case result of
           Nothing -> putStrLn (message ++ " should have failed but it did not.")
-          Just counter ->
-            if loud
-              then putStrLn counter
-              else pure ()
+          Just counter -> when loud $ putStrLn counter
     )
     ( \(ErrorCall msg) ->
         trace
           ( if loud
-              then ("Fails as expected\n" ++ msg ++ "\nOK")
-              else ("Fails as expected OK")
+              then "Fails as expected\n" ++ msg ++ "\nOK"
+              else "Fails as expected OK"
           )
           True
     )
@@ -173,20 +165,6 @@ test1 = do
   putStrLn "testing: Detect cycles"
   runCompile cyclicPred
   putStrLn "+++ OK, passed 1 test."
-
--- ===========================================
--- Test that the genT method of Sums works.
-
-test2 :: Bool -> IO ()
-test2 loud = do
-  putStrLn "testing: genT of Sums class, generates list with sum 30"
-  when loud $ putStrLn "======================================================="
-  zs <- generate (genT @[Reward Standard] ["test2"] (Coin 30) :: Gen [Reward Standard])
-  let getcoin (Reward _ _ c) = c
-      total = List.foldl' (\c r -> add c (getcoin r)) (Coin 0) zs
-  if total /= (Coin 30)
-    then error ("Does not add to 30\n" ++ (unlines (map show zs)))
-    else putStrLn "+++ OK, passed 1 test."
 
 -- ===================================
 test3 :: Gen Property
@@ -779,7 +757,6 @@ test20 =
 testAll :: IO ()
 testAll = do
   test1
-  (test2 False)
   test19
   test4
   test5
