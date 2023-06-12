@@ -8,13 +8,14 @@ import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Pretty (ppMap)
 import GHC.Real ((%))
 import Test.Cardano.Ledger.Constrained.Ast
+import Test.Cardano.Ledger.Constrained.Classes (OrdCond (..))
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Lenses (fGenDelegGenKeyHashL)
 import Test.Cardano.Ledger.Constrained.Monad (monadTyped)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
 import Test.Cardano.Ledger.Constrained.Preds.Universes
 import Test.Cardano.Ledger.Constrained.Rewrite (standardOrderInfo)
-import Test.Cardano.Ledger.Constrained.Size (OrdCond (..), Size (..), genFromSize)
+import Test.Cardano.Ledger.Constrained.Size (Size (..), genFromSize)
 import Test.Cardano.Ledger.Constrained.Solver
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars

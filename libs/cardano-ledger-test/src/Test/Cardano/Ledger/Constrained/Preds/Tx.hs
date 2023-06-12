@@ -59,7 +59,7 @@ import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
 import Test.Cardano.Ledger.Constrained.Preds.TxOut (txOutPreds)
 import Test.Cardano.Ledger.Constrained.Preds.Universes hiding (main)
 import Test.Cardano.Ledger.Constrained.Rewrite
-import Test.Cardano.Ledger.Constrained.Size (OrdCond (..), Size (..))
+import Test.Cardano.Ledger.Constrained.Size (Size (..))
 import Test.Cardano.Ledger.Constrained.Solver (toolChainSub)
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars hiding (totalAda)

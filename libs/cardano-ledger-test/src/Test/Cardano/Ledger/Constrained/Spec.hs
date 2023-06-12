@@ -35,10 +35,14 @@ import Lens.Micro hiding (set)
 import Test.Cardano.Ledger.Constrained.Ast (Pred (..), Sum (..), Term (..), runPred)
 import Test.Cardano.Ledger.Constrained.Classes (
   Adds (..),
+  AddsSpec (..),
+  OrdCond (..),
   genFromAddsSpec,
   genFromNonNegAddsSpec,
   lensAdds,
   sumAdds,
+  vLeft,
+  vRight,
  )
 import Test.Cardano.Ledger.Constrained.Combinators (
   addUntilSize,
@@ -54,8 +58,6 @@ import Test.Cardano.Ledger.Constrained.Combinators (
 import Test.Cardano.Ledger.Constrained.Env (Access (No), V (..), emptyEnv, storeVar)
 import Test.Cardano.Ledger.Constrained.Monad
 import Test.Cardano.Ledger.Constrained.Size (
-  AddsSpec (..),
-  OrdCond (..),
   Size (..),
   atLeastDelta,
   atMostAny,
@@ -65,8 +67,6 @@ import Test.Cardano.Ledger.Constrained.Size (
   runSize,
   seps,
   sepsP,
-  vLeft,
-  vRight,
  )
 import Test.Cardano.Ledger.Constrained.TypeRep (
   Rep (..),

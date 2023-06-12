@@ -23,11 +23,11 @@ import Data.Ratio ((%))
 import qualified Data.Set as Set
 import Debug.Trace (trace)
 import Test.Cardano.Ledger.Constrained.Ast
+import Test.Cardano.Ledger.Constrained.Classes (OrdCond (..))
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Lenses (fGenDelegGenKeyHashL)
 import Test.Cardano.Ledger.Constrained.Monad
 import Test.Cardano.Ledger.Constrained.Rewrite
-import Test.Cardano.Ledger.Constrained.Size (OrdCond (..))
 import Test.Cardano.Ledger.Constrained.Solver
 import Test.Cardano.Ledger.Constrained.Spec (TT)
 import Test.Cardano.Ledger.Constrained.Tests (prop_shrinking, prop_soundness)

@@ -28,6 +28,7 @@ import Lens.Micro
 import Test.Cardano.Ledger.Constrained.Classes (
   Adds (..),
   Count (..),
+  OrdCond (..),
   ScriptF (..),
   Sizeable (..),
  )
@@ -43,7 +44,7 @@ import Test.Cardano.Ledger.Constrained.Env (
   storeVar,
  )
 import Test.Cardano.Ledger.Constrained.Monad (HasConstraint (With), Typed (..), failT, monadTyped)
-import Test.Cardano.Ledger.Constrained.Size (OrdCond (..), Size (..), runSize, seps)
+import Test.Cardano.Ledger.Constrained.Size (Size (..), runSize, seps)
 import Test.Cardano.Ledger.Constrained.TypeRep (Rep (..), format, hasEq, synopsis, testEql, (:~:) (Refl))
 import Test.Cardano.Ledger.Generic.Proof (Reflect)
 import Test.QuickCheck (Gen, oneof)

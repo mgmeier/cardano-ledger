@@ -13,7 +13,6 @@ import qualified Cardano.Ledger.Alonzo.Scripts as Script (Prices (..))
 import Cardano.Ledger.Coin (Coin (..))
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Rewrite (standardOrderInfo)
-import Test.Cardano.Ledger.Constrained.Size (OrdCond (..))
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars
 import Test.Cardano.Ledger.Generic.Fields
@@ -28,6 +27,7 @@ import Cardano.Ledger.BaseTypes (
  )
 import GHC.Num (Natural)
 import Lens.Micro ((^.))
+import Test.Cardano.Ledger.Constrained.Classes (OrdCond (..))
 import Test.Cardano.Ledger.Constrained.Env (Access (..), V (..))
 import Test.Cardano.Ledger.Constrained.Solver
 

@@ -1,9 +1,11 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -12,20 +14,26 @@
 
 module Test.Cardano.Ledger.Constrained.Classes where
 
+import Cardano.Ledger.Alonzo.Scripts (ExUnits (..))
+import Cardano.Ledger.Alonzo.TxOut (AlonzoTxOut (..))
+import Cardano.Ledger.Babbage.TxOut (BabbageTxOut (..))
 import Cardano.Ledger.BaseTypes (EpochNo (..), ProtVer (..), SlotNo (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Core
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
+import Cardano.Ledger.Mary.Value (MaryValue (..), MultiAsset (..))
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import Cardano.Ledger.Pretty (PDoc, ppString)
 import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
 import qualified Cardano.Ledger.Shelley.Governance as Gov (GovernanceState (..))
 import Cardano.Ledger.Shelley.PParams (pvCanFollow)
 import qualified Cardano.Ledger.Shelley.PParams as PP (ProposedPPUpdates (..))
+import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
 import Cardano.Ledger.TxIn (TxIn)
 import Cardano.Ledger.UTxO (ScriptsNeeded, UTxO (..))
 import Cardano.Ledger.Val (Val (coin, modifyCoin, (<+>)))
+import Control.Arrow (Arrow ((***)))
 import Data.Default.Class (Default (def))
 import qualified Data.List as List
 import Data.Map.Strict (Map)
@@ -33,14 +41,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (SJust))
 import Data.Set (Set)
 import qualified Data.Set as Set
-
--- import Data.Universe (Singleton (..), (:~:) (Refl))
-
-import Cardano.Ledger.Alonzo.Scripts (ExUnits (..))
-import Cardano.Ledger.Alonzo.TxOut (AlonzoTxOut (..))
-import Cardano.Ledger.Babbage.TxOut (BabbageTxOut (..))
-import Cardano.Ledger.Mary.Value (MaryValue (..), MultiAsset (..))
-import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
 import Data.Word (Word64)
 import GHC.Real (denominator, numerator, (%))
 import Lens.Micro
@@ -48,15 +48,15 @@ import Numeric.Natural (Natural)
 import Test.Cardano.Ledger.Alonzo.Arbitrary ()
 import Test.Cardano.Ledger.Babbage.Arbitrary ()
 import Test.Cardano.Ledger.Constrained.Combinators (errorMess)
+import Test.Cardano.Ledger.Constrained.Monad (LiftT (..), Typed (..), failT)
 import Test.Cardano.Ledger.Constrained.Pairing (pair, unpair)
 import Test.Cardano.Ledger.Constrained.Scripts (genCoreScript)
 import Test.Cardano.Ledger.Constrained.Size (
-  AddsSpec (..),
-  OrdCond (..),
   Size (..),
   genFromIntRange,
   genFromNonNegIntRange,
-  runOrdCond,
+  negateSize,
+  sepsP,
  )
 import Test.Cardano.Ledger.Conway.Arbitrary ()
 import Test.Cardano.Ledger.Core.Arbitrary ()
@@ -88,46 +88,55 @@ import Test.QuickCheck (
   oneof,
   shuffle,
   vectorOf,
-  -- generate,
  )
-
--- import Debug.Trace
-
--- import Test.Cardano.Ledger.Generic.GenState(genScript,small,runGenRS,GenRS,elementsT,GenState(..))
--- import Cardano.Ledger.Alonzo.Scripts(Tag(..))
--- import Control.Monad (join, replicateM, when, zipWithM_)
--- import qualified Control.Monad.Trans.Class as Trans(MonadTrans (lift))
--- import Data.Default.Class (Default (def))
--- import Cardano.Ledger.Alonzo.Tx(IsValid(..))
-import Cardano.Ledger.Alonzo.TxWits ()
-import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..))
 
 -- =====================================================================
 -- Helper functions
 
 gauss :: Floating a => a -> a -> a -> a
-gauss mean stdev x = (1 / (stdev * (sqrt (2 * pi)))) * exp (negate ((1 / 2) * ((x - mean) / stdev) ** 2))
+gauss mean stdev x = (1 / (stdev * sqrt (2 * pi))) * exp (negate ((1 / 2) * ((x - mean) / stdev) ** 2))
 
--- ==========================================
--- The Adds class
-
+-- | The Adds class
+--
 -- Some methods of 'Adds' like 'minus', 'genAdds', 'partition' and 'fromI' are partial.
--- That is they might not be defined on all inputs. The [String] is a representation
+-- That is they might not be defined on all inputs. The `[string]` is a representation
 -- of a stack trace, that describes what the sytem was doing, so if the function is partial
 -- it can raise an appropriate error. The function
 -- Test.Cardano.Ledger.Constrained.Combinators(errorMess) is used to raise an error
 -- and properly report the stack trace.
-
 class (Eq x, Show x) => Adds x where
-  add :: x -> x -> x
-  minus :: [String] -> x -> x -> x
+  -- | Additive identity
   zero :: x
 
-  -- | 'partition 7 trace 4 235', generate a list of length 4 that
-  --   adds up t0 235, where the smallest number is >= 7
+  -- | Just the unit of increment.
+  one :: x
+
+  -- | Add two of these
+  add :: x -> x -> x
+
+  -- | Subtract one from another
+  minus :: [String] -> x -> x -> x
+
+  -- | Increase by unit of increment
+  increase :: x -> x
+  default increase :: x -> x
+  increase = add one
+
+  -- | Decrease by unit of increment
+  decrease :: [String] -> x -> x
+  default decrease :: [String] -> x -> x
+  decrease msgs = minus msgs one
+
+  -- | Negate a value
+  negateAdds :: x -> x
+
+  -- | Generate a list of values
+  -- @ partition 7 trace 4 235 @ generate a list of length 4 that
+  -- adds up t0 235, where the smallest number is >= 7
   partition :: x -> [String] -> Int -> x -> Gen [x]
 
-  -- | 'genAdds trace spec' generate an 'x' in the range specified by 'spec'
+  -- | Generate a single value
+  -- @ genAdds trace spec @ generates an 'x' in the range specified by 'spec'
   genAdds :: [String] -> AddsSpec x -> Gen x
 
   -- | Analogous to fromIntegral, translate an Int to an appropriate 'x'
@@ -137,61 +146,59 @@ class (Eq x, Show x) => Adds x where
   toI :: x -> Int
 
   -- | Used in testing to get appropriate 'smallest' values to test
-  --   'partition smallest trace count total'. The generator should choose from
-  --   several values appropriate for the type 'x'. choose [0,1,2] would be
-  --   appropriate for Natural, since there are no negative Natural numbers.
+  -- 'partition smallest trace count total'. The generator should choose from
+  -- several values appropriate for the type 'x'. choose [0,1,2] would be
+  -- appropriate for Natural, since there are no negative Natural numbers.
   genSmall :: Gen Int
 
   runOrdCondition :: OrdCond -> x -> x -> Bool
 
-  -- runOrdCondition = undefined
-  smallerOf :: Adds x => x -> x -> x
-
--- smallerOf = undefined
-
--- ================
--- helper functions
+  smallerOf :: x -> x -> x
 
 sumAdds :: (Foldable t, Adds c) => t c -> c
-sumAdds xs = List.foldl' add zero xs
-
-projAdds :: (Foldable t, Sums a b) => t a -> b
-projAdds xs = List.foldl' accum zero xs
-  where
-    accum ans x = add ans (getSum x) -- TODO: Remove after removing Sums constraint over ElemSpec
+sumAdds = List.foldl' add zero
 
 lensAdds :: (Foldable t, Adds b) => Lens' a b -> t a -> b
-lensAdds l xs = List.foldl' accum zero xs
+lensAdds l = List.foldl' accum zero
   where
     accum ans x = add ans (x ^. l)
 
 genFromAddsSpec :: [String] -> AddsSpec c -> Gen Int
 genFromAddsSpec _ AddsSpecAny = genFromIntRange SzAny
 genFromAddsSpec _ (AddsSpecSize _ size) = genFromIntRange size
-genFromAddsSpec msgs (AddsSpecNever _) = errorMess ("genFromAddsSpec applied to AddsSpecNever") msgs
+genFromAddsSpec msgs (AddsSpecNever _) = errorMess "genFromAddsSpec applied to AddsSpecNever" msgs
 
 genFromNonNegAddsSpec :: [String] -> AddsSpec c -> Gen Int
 genFromNonNegAddsSpec _ AddsSpecAny = genFromNonNegIntRange SzAny
 genFromNonNegAddsSpec _ (AddsSpecSize _ size) = genFromNonNegIntRange size
-genFromNonNegAddsSpec msgs (AddsSpecNever _) = errorMess ("genFromAddsSpec applied to AddsSpecNever") msgs
-
--- ================
--- Adds instances
+genFromNonNegAddsSpec msgs (AddsSpecNever _) = errorMess "genFromAddsSpec applied to AddsSpecNever" msgs
 
 instance Adds ExUnits where
+  zero = ExUnits 0 0
+  one = ExUnits 1 1
   add (ExUnits a b) (ExUnits c d) = ExUnits (a + c) (b + d)
   minus msgs (ExUnits a b) (ExUnits c d) =
     ExUnits
       (minus ("Ex memory" : msgs) a c)
       (minus ("Ex steps" : msgs) b d)
-  zero = ExUnits 0 0
+  negateAdds (ExUnits a b) = ExUnits (negate a) (negate b)
   partition (ExUnits smallestmemory smalleststeps) msgs count (ExUnits memory steps) = do
     memG <- partition smallestmemory ("Ex memory" : msgs) count memory
     stepsG <- partition smalleststeps ("Ex steps" : msgs) count steps
     pure (zipWith ExUnits memG stepsG)
-  genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
+  genAdds msgs = \case
+    AddsSpecAny -> formExUnits SzAny
+    AddsSpecNever msgs' -> errorMess "AddsSpecNever" $ ms <> msgs'
+    AddsSpecSize msg sz -> case sz of
+      SzNever m -> errorMess "AddsSpecSize SzNever" $ ms <> [msg] <> m
+      SzAny -> formExUnits SzAny
+      SzLeast _i -> formExUnits sz
+      SzMost _i -> formExUnits sz
+      SzRng _i _j -> formExUnits sz
     where
       ms = msgs ++ ["genAdds ExUnits"]
+      formExUnits sz = uncurry ExUnits . (fromIntegral *** fromIntegral) . unpair <$> genFromNonNegIntRange sz
+
   fromI msgs n = ExUnits mem step
     where
       (memInt, stepInt) = unpair n
@@ -207,22 +214,17 @@ instance Adds ExUnits where
   runOrdCondition LTE x y = runOrdCondition LTH x y || runOrdCondition EQL x y
   runOrdCondition GTH (ExUnits a b) (ExUnits c d) = a > c && b > d
   runOrdCondition GTE x y = runOrdCondition GTH x y || runOrdCondition EQL x y
-  smallerOf x y =
-    if runOrdCondition LTE x y
-      then x
-      else
-        if runOrdCondition GTE x y
-          then y
-          else
-            errorMess
-              "ExUnits are incomparable, can't choose the 'smallerOf'"
-              [show x, show y]
+  smallerOf x y
+    | runOrdCondition LTE x y = x
+    | runOrdCondition GTE x y = y
+    | otherwise = errorMess "ExUnits are incomparable, can't choose the 'smallerOf'" [show x, show y]
 
--- ================
 instance Adds Word64 where
+  zero = 0
+  one = 1
   add = (+)
   minus _ = (-)
-  zero = 0
+  negateAdds a = errorMess "Cannot `negateAdds` a Word64" [show a]
   partition = partitionWord64
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -235,9 +237,11 @@ instance Adds Word64 where
   smallerOf = min
 
 instance Adds Int where
+  zero = 0
+  one = 1
   add = (+)
   minus _ = (-)
-  zero = 0
+  negateAdds = negate
   partition = partitionInt
   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
     where
@@ -249,12 +253,14 @@ instance Adds Int where
   smallerOf = min
 
 instance Adds Natural where
+  zero = 0
+  one = 1
   add = (+)
   minus msg x y =
     if x < y
       then errorMess ("(minus @Natural " ++ show x ++ " " ++ show y ++ ") is not possible") msg
       else x - y
-  zero = 0
+  negateAdds = negate
   partition = partitionNatural
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -267,9 +273,11 @@ instance Adds Natural where
   smallerOf = min
 
 instance Adds Rational where
+  zero = 0
+  one = 1
   add = (+)
   minus _ = (-)
-  zero = 0
+  negateAdds = negate
   partition = partitionRational
   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
     where
@@ -281,12 +289,14 @@ instance Adds Rational where
   smallerOf = min
 
 instance Adds Coin where
+  zero = Coin 0
+  one = Coin 1
   add = (<+>)
   minus msg (Coin n) (Coin m) =
     if n < m
       then errorMess ("(minus @Coin " ++ show n ++ " " ++ show m ++ ") is not possible") msg
       else Coin (n - m)
-  zero = Coin 0
+  negateAdds (Coin x) = Coin (negate x)
   partition = partitionCoin
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -299,9 +309,11 @@ instance Adds Coin where
   smallerOf = min
 
 instance Adds DeltaCoin where
+  zero = DeltaCoin 0
+  one = DeltaCoin 1
   add = (<+>)
   minus _ (DeltaCoin n) (DeltaCoin m) = DeltaCoin (n - m)
-  zero = DeltaCoin 0
+  negateAdds (DeltaCoin x) = DeltaCoin (negate x)
   partition = partitionDeltaCoin
   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
     where
@@ -312,20 +324,15 @@ instance Adds DeltaCoin where
   runOrdCondition = runOrdCond
   smallerOf = min
 
--- ===========================================================================
--- The Sums class, for summing a projected c (where Adds c) from some richer type
-
-class (Show x, Adds x) => Sums t x | t -> x where
-  getSum :: t -> x
-  genT :: [String] -> x -> Gen t
-
-instance GoodCrypto c => Sums (IndividualPoolStake c) Rational where
-  getSum (IndividualPoolStake r _) = r
-  genT _ r = IndividualPoolStake r <$> arbitrary
-
-instance (Reflect era) => Sums (TxOutF era) Coin where
-  getSum (TxOutF _ txout) = coin (txout ^. valueTxOutL)
-  genT _ cn = genTxOutX reify cn
+-- instance Adds Size where
+--   zero = SzNever ["Adds Size (zero)"]
+--   one = SzRng 1 1
+--   add = mergeSize
+--   minus msgs _ _ = SzNever msgs
+--   negateAdds = negateSize
+--   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
+--     where
+--       ms = msgs ++ ["genAdds DeltaCoin"]
 
 genTxOutX :: Reflect era => Proof era -> Coin -> Gen (TxOutF era)
 genTxOutX p coins = do
@@ -338,26 +345,10 @@ genTxOutX p coins = do
     Conway _ -> arbitrary
   pure $ TxOutF p (txout & coinTxOutL .~ coins)
 
-instance Reflect era => Sums (ValueF era) Coin where
-  getSum (ValueF _ v) = coin v
-  genT _ cn = genValueX reify cn
-
 genValueX :: Reflect era => Proof era -> Coin -> Gen (ValueF era)
 genValueX proof cn = do
   ValueF p v <- genValue proof
   pure (ValueF p (modifyCoin (const cn) v))
-
-instance Crypto c => Sums [Reward c] Coin where
-  getSum ss = List.foldl' accum (Coin 0) ss
-    where
-      accum ans (Reward _ _ c) = add ans c
-  genT _ (Coin 1) = (: []) <$> (updateRew (Coin 1) <$> arbitrary)
-  genT msgs (Coin n) | n > 1 = do
-    size <- chooseInt (1, fromIntegral n)
-    cs <- partition (Coin 1) msgs size (Coin n)
-    list <- vectorOf size (arbitrary :: Gen (Reward c))
-    pure $ zipWith (updateRew @c) cs list
-  genT msgs c = errorMess ("Coin in genT must be positive: " ++ show c) msgs
 
 updateRew :: forall c. Coin -> Reward c -> Reward c
 updateRew c (Reward a b _) = Reward a b c
@@ -932,3 +923,159 @@ partitionWord64 small msgs n total =
 partitionNatural :: Natural -> [String] -> Int -> Natural -> Gen [Natural]
 partitionNatural small msgs n total =
   map fromIntegral <$> integerPartition msgs "Natural" (fromIntegral small) n (fromIntegral total)
+
+-- | Translate (s,cond,n), into a Size which
+--   specifies the Int range on which the OrdCond is True.
+--   The triple (s, EQL, 2) denotes s = 2
+--              (s, LTH, 7) denotes s < 7
+--              (s, GTH, 5) denotes s > 5 ...
+ordCondToSize :: Adds a => (String, OrdCond, a) -> Size
+ordCondToSize (label, cond, n) = case cond of
+  EQL -> SzExact $ toI n
+  LTH -> SzMost $ toI $ decrease [unlines ["ordCondToSize failed for", label, show n]] n
+  LTE -> SzMost $ toI n
+  GTH -> SzLeast $ toI $ increase n
+  GTE -> SzLeast $ toI n
+
+-- n encodes (ExUnits 4 7) we want m which encodes (ExUnits 3 6)
+-- increment :: Adds c => Int -> Int, decrement :: Adds c => Int -> Int
+-- default increment = (+1)
+-- ExUnit implementation :: increment n = (i, j) = unpair n, pair (increment i, increment j)
+
+-- genFromSize :: Size -> Int
+-- genAdds :: Adds c => Size -> Gen x
+-- genAdds (SzExact n)
+--   where (i, j) = unpair n, do ig <- genAdds (SzExact i), jg <- genAdds (szExact j), pure (ExUnits ig jg)
+
+-- Translate some thing like [SumsTo _ x <= 4 + 6 + 9] where the variable 'x' is on the left
+vLeft :: Adds a => String -> OrdCond -> a -> AddsSpec c
+vLeft x cond n = AddsSpecSize x (vLeftSize x cond n)
+
+vLeftSize :: Adds a => String -> OrdCond -> a -> Size
+vLeftSize x cond n = ordCondToSize (x, cond, n)
+
+-- Translate some thing like [SumsTo c 8 < 2 + x + 3] where the variable 'x' is on the right
+vRight :: Int -> OrdCond -> Int -> String -> AddsSpec c
+vRight n cond m s = AddsSpecSize s (vRightSize n cond m s)
+
+vRightSize :: Adds a => a -> OrdCond -> a -> String -> Size
+vRightSize n cond m s = ordCondToSize (s, reverseOrdCond cond, minus [s] m n)
+
+-- Translate some thing like [SumsTo (Negate x) <= 4 + 6 + 9] where the variable 'x'
+-- is on the left, and we want to produce its negation.
+vLeftNeg :: Adds a => String -> OrdCond -> a -> AddsSpec c
+vLeftNeg s cond n = AddsSpecSize s (negateSize (ordCondToSize (s, cond, n)))
+
+-- Translate some thing like [SumsTo 8 < 2 + (Negate x) + 3] where the
+-- variable 'x' is on the right, and we want to produce its negation.
+vRightNeg :: Adds a => a -> OrdCond -> a -> String -> AddsSpec c
+vRightNeg n cond m s = AddsSpecSize s (negateSize (ordCondToSize (s, reverseOrdCond cond, minus [s] m n)))
+
+-- | This function `reverseOrdCond` has been defined to handle the Pred SumsTo when the
+--   variable is on the right-hand-side (rhs) of the OrdCond operator. In order to do that
+--   we must multiply both sides of the inequality by (-1). For example consider
+--   [SumsTo (DeltaCoin 1) ▵₳ -2 > ∑ ▵₳ -1 + x]
+--                 Note variable x on the rhs ^
+--    To solve we subtract 'x' from both sides, and add '▵₳ -2' from bothsides
+--    getting      (-x) > ∑  (▵₳ -1) + (▵₳ -2)
+--    reduced to   (-x) > ∑  (▵₳ -3)
+--    to solve we must multiply both sides by (-1)
+--                 x ?? ∑  (▵₳ 3)
+-- What operator do we replace ?? by to make the original (▵₳ -2 > ∑ ▵₳ -1 + x) True?
+-- The change in the operator is called "reversing" the operator. See
+-- https://www.mathsisfun.com/algebra/inequality-solving.html for one explantion.
+reverseOrdCond :: OrdCond -> OrdCond
+reverseOrdCond EQL = EQL
+reverseOrdCond LTH = GTH
+reverseOrdCond LTE = GTE
+reverseOrdCond GTH = LTH
+reverseOrdCond GTE = LTE
+
+-- =========================================================================
+-- OrdCond
+-- x <= y
+--   ^     paramerterize over the condition
+--
+-- EQL = (==), LTH = (<), LTE = (<=), GTH = (>), GTE = (>=)
+-- =========================================================================
+
+-- | First order representation of the Ord comparisons
+data OrdCond = EQL | LTH | LTE | GTH | GTE
+  deriving (Eq)
+
+instance Show OrdCond where
+  show EQL = " = ∑ "
+  show LTH = " < ∑ "
+  show LTE = " <= ∑ "
+  show GTH = " > ∑ "
+  show GTE = " >= ∑ "
+
+runOrdCond :: Ord c => OrdCond -> c -> c -> Bool
+runOrdCond EQL x y = x == y
+runOrdCond LTH x y = x < y
+runOrdCond LTE x y = x <= y
+runOrdCond GTH x y = x > y
+runOrdCond GTE x y = x >= y
+
+-- =========================================================================
+-- AddsSpec
+-- =========================================================================
+
+-- | A specification of summation. like: lhs = ∑ rhs
+--   The idea is that the 'rhs' can contain multiple terms: rhs = ∑ r1 + r2 + r3
+--   Other example conditions:  (lhs < ∑ rhs), and (lhs >= ∑ rhs)
+--   The invariant is that only a single variable appears in the summation.
+--   It can appear on either side. If it appears in the 'rhs' then there
+--   may be other, constant terms, in the rhs:  7 = ∑ 3 + v + 9
+--   We always do the sums and solving at type Int, and cast back and forth to
+--   accommodate other types with (Adds c) instances, using the methods 'fromI" and 'toI'
+--   This allows the instance to deal with special conditions.
+--   There are two (non-failure) possibilities 1) Var on the left, 2) Var on the right
+--   We supply functions
+--      vLeft  :: String -> OrdCond -> Integer -> AddsSpec c
+--                SumsTo _ x <= 4 + 6 + 9 ===> (vLeft x LTE 19) == (AddsSpecSize x (AtMost 19))
+--      vRight :: Integer -> OrdCond -> Integer -> String -> AddsSpec c
+--                SumsTo _ 8 < 2 + x + 3 ===> (vRight 8 LTH 5 x) == (AddsSpecSize x (AtLeast 4))
+--   But internally we store the information as a String and a Size (I.e. a range of Int)
+data AddsSpec c where
+  AddsSpecSize ::
+    -- | name
+    String ->
+    -- | total (range like (4 .. 12))
+    Size ->
+    AddsSpec c
+  AddsSpecAny :: AddsSpec c
+  AddsSpecNever :: [String] -> AddsSpec c
+
+instance LiftT (AddsSpec c) where
+  liftT (AddsSpecNever xs) = failT xs
+  liftT x = pure x
+  dropT (Typed (Left s)) = AddsSpecNever s
+  dropT (Typed (Right x)) = x
+
+instance Show (AddsSpec c) where show = showAddsSpec
+
+instance Semigroup (AddsSpec c) where (<>) = mergeAddsSpec
+instance Monoid (AddsSpec c) where mempty = AddsSpecAny
+
+showAddsSpec :: AddsSpec c -> String
+showAddsSpec AddsSpecAny = "AddsSpecAny"
+showAddsSpec (AddsSpecSize s size) = sepsP ["AddsSpecSize", s, show size]
+showAddsSpec (AddsSpecNever _) = "AddsSpecNever"
+
+mergeAddsSpec :: AddsSpec c -> AddsSpec c -> AddsSpec c
+mergeAddsSpec (AddsSpecNever xs) (AddsSpecNever ys) = AddsSpecNever (xs ++ ys)
+mergeAddsSpec x@(AddsSpecNever _) _ = x
+mergeAddsSpec _ x@(AddsSpecNever _) = x
+mergeAddsSpec AddsSpecAny x = x
+mergeAddsSpec x AddsSpecAny = x
+mergeAddsSpec a@(AddsSpecSize nam1 size1) b@(AddsSpecSize nam2 size2) =
+  if nam1 /= nam2
+    then
+      AddsSpecNever
+        [ "vars " ++ nam1 ++ " and " ++ nam2 ++ " are not the same."
+        , show a ++ " " ++ show b ++ " are inconsistent."
+        ]
+    else case size1 <> size2 of
+      (SzNever xs) -> AddsSpecNever (xs ++ [show a ++ " " ++ show a ++ " are inconsistent."])
+      size3 -> AddsSpecSize nam1 size3

@@ -4,7 +4,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -27,24 +26,24 @@ import Numeric.Natural (Natural)
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Classes (
   Adds (..),
+  AddsSpec (..),
   Count (..),
+  OrdCond (..),
   ScriptF (..),
   Sizeable (getSize),
+  vLeft,
+  vRight,
+  vRightNeg,
+  vRightSize,
  )
 import Test.Cardano.Ledger.Constrained.Combinators (errorMess, genFromMap, itemFromSet, suchThatErr)
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Monad
 import Test.Cardano.Ledger.Constrained.Rewrite (DependGraph (..), OrderInfo, compileGen)
 import Test.Cardano.Ledger.Constrained.Size (
-  AddsSpec (..),
-  OrdCond (..),
   Size (..),
   genFromIntRange,
   genFromSize,
-  vLeft,
-  vRight,
-  vRightNeg,
-  vRightSize,
  )
 import Test.Cardano.Ledger.Constrained.Spec (
   ElemSpec (..),
