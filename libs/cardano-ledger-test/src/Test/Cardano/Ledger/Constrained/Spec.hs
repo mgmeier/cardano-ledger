@@ -41,8 +41,8 @@ import Test.Cardano.Ledger.Constrained.Classes (
   genFromNonNegAddsSpec,
   lensAdds,
   sumAdds,
-  vLeft,
-  vRight,
+  varOnLeft,
+  varOnRight,
  )
 import Test.Cardano.Ledger.Constrained.Combinators (
   addUntilSize,
@@ -1469,16 +1469,6 @@ mergeElemSpec a@(ElemSum sm1 sz1) b@(ElemSum sm2 sz2) =
   case sz1 <> sz2 of
     SzNever xs -> ElemNever (sepsP ["The ElemSpec's are inconsistent.", show a, show b] : xs)
     sz3 -> ElemSum (smallerOf sm1 sm2) sz3
--- mergeElemSpec a@(ElemProj sm1 r1 l1 sz1) b@(ElemProj sm2 r2 l2 sz2) =
---   case testEql r1 r2 of
---     Just Refl ->
---       case sz1 <> sz2 of
---         SzNever xs -> ElemNever (sepsP ["The ElemSpec's are inconsistent.", show a, show b] : xs)
---         sz3 ->
---           if l1 == l2
---             then ElemProj (smallerOf sm1 sm2) r1 l1 sz3
---             else ElemNever ["The lenses for ElemProj are inconsistent", " " <> show a, " " <> show b]
---     Nothing -> ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
 mergeElemSpec a b = ElemNever ["The ElemSpec's are inconsistent.", "  " ++ show a, "  " ++ show b]
 
 sizeForElemSpec :: forall a era. ElemSpec era a -> Size
@@ -1840,9 +1830,9 @@ genSumsTo = do
 
 solveSumsTo :: Pred era -> AddsSpec c
 solveSumsTo (SumsTo _ (Lit DeltaCoinR n) cond [One (Lit DeltaCoinR m), One (Var (V nam _ _))]) =
-  vRight (toI n) cond (toI m) nam
+  varOnRight n cond m nam
 solveSumsTo (SumsTo _ (Var (V nam DeltaCoinR _)) cond [One (Lit DeltaCoinR m)]) =
-  vLeft nam cond (toI m)
+  varOnLeft nam cond m
 solveSumsTo x = AddsSpecNever ["solveSumsTo " ++ show x]
 
 condReverse :: Gen Property
@@ -1856,24 +1846,24 @@ condReverse = do
     Right x -> pure (counterexample (unlines (show n : msgs)) x)
     Left xs -> errorMess "runTyped in condFlip fails" (xs ++ (show n : msgs))
 
-genAddsSpec :: Gen (AddsSpec c)
+genAddsSpec :: forall c. Adds c => Gen (AddsSpec c)
 genAddsSpec = do
   v <- elements ["x", "y"]
   c <- genOrdCond
-  rhs <- choose (-25, 25)
-  lhs <- choose (-25, 25)
-  elements [vLeft v c rhs, vRight lhs c rhs v]
+  rhs <- fromI @c ["genAddsSpec"] <$> choose @Int (-25, 25)
+  lhs <- fromI @c ["genAddsSpec"] <$> choose @Int (-25, 25)
+  elements [varOnLeft v c rhs, varOnRight lhs c rhs v]
 
 genNonNegAddsSpec :: Gen (AddsSpec c)
 genNonNegAddsSpec = do
   v <- elements ["x", "y"]
   c <- genOrdCond
-  lhs <- choose (10, 30)
-  rhs <- choose (1, lhs - 1)
+  lhs <- choose @Int (10, 30)
+  rhs <- choose @Int (1, lhs - 1)
   let lhs' = case c of
         LTH -> lhs + 1
         _ -> lhs
-  elements [vLeft v c rhs, vRight lhs' c rhs v]
+  elements [varOnLeft v c rhs, varOnRight lhs' c rhs v]
 
 genOrdCond :: Gen OrdCond
 genOrdCond = elements [EQL, LTH, LTE, GTH, GTE]

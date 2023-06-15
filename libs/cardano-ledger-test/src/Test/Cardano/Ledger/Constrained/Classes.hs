@@ -1,9 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
@@ -16,6 +14,7 @@ module Test.Cardano.Ledger.Constrained.Classes where
 
 import Cardano.Ledger.Alonzo.Scripts (ExUnits (..))
 import Cardano.Ledger.Alonzo.TxOut (AlonzoTxOut (..))
+import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash)
 import Cardano.Ledger.Babbage.TxOut (BabbageTxOut (..))
 import Cardano.Ledger.BaseTypes (EpochNo (..), ProtVer (..), SlotNo (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
@@ -23,7 +22,6 @@ import Cardano.Ledger.Core
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import Cardano.Ledger.Mary.Value (MaryValue (..), MultiAsset (..))
-import Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import Cardano.Ledger.Pretty (PDoc, ppString)
 import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
 import qualified Cardano.Ledger.Shelley.Governance as Gov (GovernanceState (..))
@@ -32,8 +30,7 @@ import qualified Cardano.Ledger.Shelley.PParams as PP (ProposedPPUpdates (..))
 import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
 import Cardano.Ledger.TxIn (TxIn)
 import Cardano.Ledger.UTxO (ScriptsNeeded, UTxO (..))
-import Cardano.Ledger.Val (Val (coin, modifyCoin, (<+>)))
-import Control.Arrow (Arrow ((***)))
+import Cardano.Ledger.Val (Val (modifyCoin, (<+>)))
 import Data.Default.Class (Default (def))
 import qualified Data.List as List
 import Data.Map.Strict (Map)
@@ -55,6 +52,7 @@ import Test.Cardano.Ledger.Constrained.Size (
   Size (..),
   genFromIntRange,
   genFromNonNegIntRange,
+  genFromSize,
   negateSize,
   sepsP,
  )
@@ -71,7 +69,6 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcWitnesses,
  )
 import Test.Cardano.Ledger.Generic.Proof (
-  GoodCrypto,
   Proof (..),
   Reflect (..),
   unReflect,
@@ -82,7 +79,6 @@ import Test.QuickCheck (
   Arbitrary (..),
   Gen,
   choose,
-  chooseInt,
   elements,
   frequency,
   oneof,
@@ -117,18 +113,11 @@ class (Eq x, Show x) => Adds x where
   -- | Subtract one from another
   minus :: [String] -> x -> x -> x
 
-  -- | Increase by unit of increment
-  increase :: x -> x
-  default increase :: x -> x
-  increase = add one
+  -- -- | Increase by unit of increment
+  -- increaseBy1 :: x -> x
 
-  -- | Decrease by unit of increment
-  decrease :: [String] -> x -> x
-  default decrease :: [String] -> x -> x
-  decrease msgs = minus msgs one
-
-  -- | Negate a value
-  negateAdds :: x -> x
+  -- -- | Decrease by unit of increment
+  -- decreaseBy1 :: x -> x
 
   -- | Generate a list of values
   -- @ partition 7 trace 4 235 @ generate a list of length 4 that
@@ -181,23 +170,36 @@ instance Adds ExUnits where
     ExUnits
       (minus ("Ex memory" : msgs) a c)
       (minus ("Ex steps" : msgs) b d)
-  negateAdds (ExUnits a b) = ExUnits (negate a) (negate b)
   partition (ExUnits smallestmemory smalleststeps) msgs count (ExUnits memory steps) = do
     memG <- partition smallestmemory ("Ex memory" : msgs) count memory
     stepsG <- partition smalleststeps ("Ex steps" : msgs) count steps
     pure (zipWith ExUnits memG stepsG)
   genAdds msgs = \case
-    AddsSpecAny -> formExUnits SzAny
+    AddsSpecAny -> errorMess "AddsSpecAny" ms
     AddsSpecNever msgs' -> errorMess "AddsSpecNever" $ ms <> msgs'
     AddsSpecSize msg sz -> case sz of
+      SzLeast n ->
+        let (i, j) = unpair n
+         in do
+              ig <- fromIntegral <$> genFromSize (SzLeast i)
+              jg <- fromIntegral <$> genFromSize (SzLeast j)
+              pure $ ExUnits ig jg
+      SzMost n ->
+        let (i, j) = unpair n
+         in do
+              ig <- fromIntegral <$> genFromSize (SzMost i)
+              jg <- fromIntegral <$> genFromSize (SzMost j)
+              pure $ ExUnits ig jg
+      SzExact n ->
+        let (i, j) = unpair n
+         in do
+              ig <- fromIntegral <$> genFromSize (SzExact i)
+              jg <- fromIntegral <$> genFromSize (SzExact j)
+              pure $ ExUnits ig jg
       SzNever m -> errorMess "AddsSpecSize SzNever" $ ms <> [msg] <> m
-      SzAny -> formExUnits SzAny
-      SzLeast _i -> formExUnits sz
-      SzMost _i -> formExUnits sz
-      SzRng _i _j -> formExUnits sz
+      _ -> errorMess "AddsSpecSize SzAny or SzRng" $ ms <> [msg]
     where
       ms = msgs ++ ["genAdds ExUnits"]
-      formExUnits sz = uncurry ExUnits . (fromIntegral *** fromIntegral) . unpair <$> genFromNonNegIntRange sz
 
   fromI msgs n = ExUnits mem step
     where
@@ -224,7 +226,6 @@ instance Adds Word64 where
   one = 1
   add = (+)
   minus _ = (-)
-  negateAdds a = errorMess "Cannot `negateAdds` a Word64" [show a]
   partition = partitionWord64
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -241,7 +242,6 @@ instance Adds Int where
   one = 1
   add = (+)
   minus _ = (-)
-  negateAdds = negate
   partition = partitionInt
   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
     where
@@ -260,7 +260,6 @@ instance Adds Natural where
     if x < y
       then errorMess ("(minus @Natural " ++ show x ++ " " ++ show y ++ ") is not possible") msg
       else x - y
-  negateAdds = negate
   partition = partitionNatural
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -277,7 +276,6 @@ instance Adds Rational where
   one = 1
   add = (+)
   minus _ = (-)
-  negateAdds = negate
   partition = partitionRational
   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
     where
@@ -296,7 +294,6 @@ instance Adds Coin where
     if n < m
       then errorMess ("(minus @Coin " ++ show n ++ " " ++ show m ++ ") is not possible") msg
       else Coin (n - m)
-  negateAdds (Coin x) = Coin (negate x)
   partition = partitionCoin
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -313,7 +310,6 @@ instance Adds DeltaCoin where
   one = DeltaCoin 1
   add = (<+>)
   minus _ (DeltaCoin n) (DeltaCoin m) = DeltaCoin (n - m)
-  negateAdds (DeltaCoin x) = DeltaCoin (negate x)
   partition = partitionDeltaCoin
   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
     where
@@ -323,16 +319,6 @@ instance Adds DeltaCoin where
   genSmall = elements [-2, 0, 1, 2]
   runOrdCondition = runOrdCond
   smallerOf = min
-
--- instance Adds Size where
---   zero = SzNever ["Adds Size (zero)"]
---   one = SzRng 1 1
---   add = mergeSize
---   minus msgs _ _ = SzNever msgs
---   negateAdds = negateSize
---   genAdds msgs spec = fromI ms <$> genFromAddsSpec ms spec
---     where
---       ms = msgs ++ ["genAdds DeltaCoin"]
 
 genTxOutX :: Reflect era => Proof era -> Coin -> Gen (TxOutF era)
 genTxOutX p coins = do
@@ -930,46 +916,42 @@ partitionNatural small msgs n total =
 --              (s, LTH, 7) denotes s < 7
 --              (s, GTH, 5) denotes s > 5 ...
 ordCondToSize :: Adds a => (String, OrdCond, a) -> Size
-ordCondToSize (label, cond, n) = case cond of
+ordCondToSize (_label, cond, n) = case cond of
   EQL -> SzExact $ toI n
-  LTH -> SzMost $ toI $ decrease [unlines ["ordCondToSize failed for", label, show n]] n
+  LTH -> SzMost $ decreaseBy1 $ toI n
   LTE -> SzMost $ toI n
-  GTH -> SzLeast $ toI $ increase n
+  GTH -> SzLeast $ increaseBy1 $ toI n
   GTE -> SzLeast $ toI n
 
--- n encodes (ExUnits 4 7) we want m which encodes (ExUnits 3 6)
--- increment :: Adds c => Int -> Int, decrement :: Adds c => Int -> Int
--- default increment = (+1)
--- ExUnit implementation :: increment n = (i, j) = unpair n, pair (increment i, increment j)
+increaseBy1 :: Int -> Int
+increaseBy1 n = let (i, j) = unpair n in pair (i + 1) (j + 1)
 
--- genFromSize :: Size -> Int
--- genAdds :: Adds c => Size -> Gen x
--- genAdds (SzExact n)
---   where (i, j) = unpair n, do ig <- genAdds (SzExact i), jg <- genAdds (szExact j), pure (ExUnits ig jg)
+decreaseBy1 :: Int -> Int
+decreaseBy1 n = let (i, j) = unpair n in pair (i - 1) (j - 1)
 
 -- Translate some thing like [SumsTo _ x <= 4 + 6 + 9] where the variable 'x' is on the left
-vLeft :: Adds a => String -> OrdCond -> a -> AddsSpec c
-vLeft x cond n = AddsSpecSize x (vLeftSize x cond n)
+varOnLeft :: Adds a => String -> OrdCond -> a -> AddsSpec c
+varOnLeft x cond n = AddsSpecSize x (varOnLeftSize x cond n)
 
-vLeftSize :: Adds a => String -> OrdCond -> a -> Size
-vLeftSize x cond n = ordCondToSize (x, cond, n)
+varOnLeftSize :: Adds a => String -> OrdCond -> a -> Size
+varOnLeftSize x cond n = ordCondToSize (x, cond, n)
 
 -- Translate some thing like [SumsTo c 8 < 2 + x + 3] where the variable 'x' is on the right
-vRight :: Int -> OrdCond -> Int -> String -> AddsSpec c
-vRight n cond m s = AddsSpecSize s (vRightSize n cond m s)
+varOnRight :: Adds a => a -> OrdCond -> a -> String -> AddsSpec c
+varOnRight n cond m s = AddsSpecSize s (varOnRightSize n cond m s)
 
-vRightSize :: Adds a => a -> OrdCond -> a -> String -> Size
-vRightSize n cond m s = ordCondToSize (s, reverseOrdCond cond, minus [s] m n)
+varOnRightSize :: Adds a => a -> OrdCond -> a -> String -> Size
+varOnRightSize n cond m s = ordCondToSize (s, reverseOrdCond cond, minus [s] m n)
 
 -- Translate some thing like [SumsTo (Negate x) <= 4 + 6 + 9] where the variable 'x'
 -- is on the left, and we want to produce its negation.
-vLeftNeg :: Adds a => String -> OrdCond -> a -> AddsSpec c
-vLeftNeg s cond n = AddsSpecSize s (negateSize (ordCondToSize (s, cond, n)))
+varOnLeftNeg :: Adds a => String -> OrdCond -> a -> AddsSpec c
+varOnLeftNeg s cond n = AddsSpecSize s (negateSize (ordCondToSize (s, cond, n)))
 
 -- Translate some thing like [SumsTo 8 < 2 + (Negate x) + 3] where the
 -- variable 'x' is on the right, and we want to produce its negation.
-vRightNeg :: Adds a => a -> OrdCond -> a -> String -> AddsSpec c
-vRightNeg n cond m s = AddsSpecSize s (negateSize (ordCondToSize (s, reverseOrdCond cond, minus [s] m n)))
+varOnRightNeg :: Adds a => a -> OrdCond -> a -> String -> AddsSpec c
+varOnRightNeg n cond m s = AddsSpecSize s (negateSize (ordCondToSize (s, reverseOrdCond cond, minus [s] m n)))
 
 -- | This function `reverseOrdCond` has been defined to handle the Pred SumsTo when the
 --   variable is on the right-hand-side (rhs) of the OrdCond operator. In order to do that
@@ -1032,10 +1014,10 @@ runOrdCond GTE x y = x >= y
 --   This allows the instance to deal with special conditions.
 --   There are two (non-failure) possibilities 1) Var on the left, 2) Var on the right
 --   We supply functions
---      vLeft  :: String -> OrdCond -> Integer -> AddsSpec c
---                SumsTo _ x <= 4 + 6 + 9 ===> (vLeft x LTE 19) == (AddsSpecSize x (AtMost 19))
---      vRight :: Integer -> OrdCond -> Integer -> String -> AddsSpec c
---                SumsTo _ 8 < 2 + x + 3 ===> (vRight 8 LTH 5 x) == (AddsSpecSize x (AtLeast 4))
+--      varOnLeft  :: String -> OrdCond -> Integer -> AddsSpec c
+--                SumsTo _ x <= 4 + 6 + 9 ===> (varOnLeft x LTE 19) == (AddsSpecSize x (AtMost 19))
+--      varOnRight :: Integer -> OrdCond -> Integer -> String -> AddsSpec c
+--                SumsTo _ 8 < 2 + x + 3 ===> (varOnRight 8 LTH 5 x) == (AddsSpecSize x (AtLeast 4))
 --   But internally we store the information as a String and a Size (I.e. a range of Int)
 data AddsSpec c where
   AddsSpecSize ::
