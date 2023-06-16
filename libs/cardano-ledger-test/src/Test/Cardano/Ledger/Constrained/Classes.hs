@@ -113,11 +113,13 @@ class (Eq x, Show x) => Adds x where
   -- | Subtract one from another
   minus :: [String] -> x -> x -> x
 
-  -- -- | Increase by unit of increment
-  -- increaseBy1 :: x -> x
+  -- | Increase by unit of increment
+  increaseBy1 :: Int -> Int
+  increaseBy1 n = add n one
 
-  -- -- | Decrease by unit of increment
-  -- decreaseBy1 :: x -> x
+  -- | Decrease by unit of increment
+  decreaseBy1 :: Int -> Int
+  decreaseBy1 n = minus ["Minus"] n one
 
   -- | Generate a list of values
   -- @ partition 7 trace 4 235 @ generate a list of length 4 that
@@ -170,6 +172,8 @@ instance Adds ExUnits where
     ExUnits
       (minus ("Ex memory" : msgs) a c)
       (minus ("Ex steps" : msgs) b d)
+  increaseBy1 n = let (i, j) = unpair n in pair (increaseBy1 @Natural i) (increaseBy1 @Natural j)
+  decreaseBy1 n = let (i, j) = unpair n in pair (decreaseBy1 @Natural i) (decreaseBy1 @Natural j)
   partition (ExUnits smallestmemory smalleststeps) msgs count (ExUnits memory steps) = do
     memG <- partition smallestmemory ("Ex memory" : msgs) count memory
     stepsG <- partition smalleststeps ("Ex steps" : msgs) count steps
@@ -204,9 +208,9 @@ instance Adds ExUnits where
   fromI msgs n = ExUnits mem step
     where
       (memInt, stepInt) = unpair n
-      mem = fromI ("Ex memory" : msgs) (fromIntegral memInt)
-      step = fromI ("Ex steps" : msgs) (fromIntegral stepInt)
-  toI (ExUnits mem step) = pair (fromIntegral mem) (fromIntegral step)
+      mem = fromI ("Ex memory" : msgs) memInt
+      step = fromI ("Ex steps" : msgs) stepInt
+  toI (ExUnits mem step) = pair (toI mem) (toI step)
   genSmall = oneof [pure $ toI (ExUnits 1 1), pure $ toI (ExUnits 2 2), pure $ toI (ExUnits 3 1)]
 
   -- Some ExUnits are incomparable: i.e. x=(ExUnits 5 7) and y=(ExUnits 8 3)
@@ -225,7 +229,10 @@ instance Adds Word64 where
   zero = 0
   one = 1
   add = (+)
-  minus _ = (-)
+  minus msg x y =
+    if x < y
+      then errorMess ("(minus @Word64 " ++ show x ++ " " ++ show y ++ ") is not possible") msg
+      else x - y
   partition = partitionWord64
   genAdds msgs spec = fromI ms <$> genFromNonNegAddsSpec ms spec
     where
@@ -915,19 +922,13 @@ partitionNatural small msgs n total =
 --   The triple (s, EQL, 2) denotes s = 2
 --              (s, LTH, 7) denotes s < 7
 --              (s, GTH, 5) denotes s > 5 ...
-ordCondToSize :: Adds a => (String, OrdCond, a) -> Size
+ordCondToSize :: forall a. Adds a => (String, OrdCond, a) -> Size
 ordCondToSize (_label, cond, n) = case cond of
   EQL -> SzExact $ toI n
-  LTH -> SzMost $ decreaseBy1 $ toI n
+  LTH -> SzMost $ decreaseBy1 @a $ toI n
   LTE -> SzMost $ toI n
-  GTH -> SzLeast $ increaseBy1 $ toI n
+  GTH -> SzLeast $ increaseBy1 @a $ toI n
   GTE -> SzLeast $ toI n
-
-increaseBy1 :: Int -> Int
-increaseBy1 n = let (i, j) = unpair n in pair (i + 1) (j + 1)
-
-decreaseBy1 :: Int -> Int
-decreaseBy1 n = let (i, j) = unpair n in pair (i - 1) (j - 1)
 
 -- Translate some thing like [SumsTo _ x <= 4 + 6 + 9] where the variable 'x' is on the left
 varOnLeft :: Adds a => String -> OrdCond -> a -> AddsSpec c
@@ -941,7 +942,7 @@ varOnRight :: Adds a => a -> OrdCond -> a -> String -> AddsSpec c
 varOnRight n cond m s = AddsSpecSize s (varOnRightSize n cond m s)
 
 varOnRightSize :: Adds a => a -> OrdCond -> a -> String -> Size
-varOnRightSize n cond m s = ordCondToSize (s, reverseOrdCond cond, minus [s] m n)
+varOnRightSize n cond m s = ordCondToSize (s, reverseOrdCond cond, minus [s] n m)
 
 -- Translate some thing like [SumsTo (Negate x) <= 4 + 6 + 9] where the variable 'x'
 -- is on the left, and we want to produce its negation.
@@ -951,7 +952,7 @@ varOnLeftNeg s cond n = AddsSpecSize s (negateSize (ordCondToSize (s, cond, n)))
 -- Translate some thing like [SumsTo 8 < 2 + (Negate x) + 3] where the
 -- variable 'x' is on the right, and we want to produce its negation.
 varOnRightNeg :: Adds a => a -> OrdCond -> a -> String -> AddsSpec c
-varOnRightNeg n cond m s = AddsSpecSize s (negateSize (ordCondToSize (s, reverseOrdCond cond, minus [s] m n)))
+varOnRightNeg n cond m s = AddsSpecSize s (negateSize (ordCondToSize (s, reverseOrdCond cond, minus [s] n m)))
 
 -- | This function `reverseOrdCond` has been defined to handle the Pred SumsTo when the
 --   variable is on the right-hand-side (rhs) of the OrdCond operator. In order to do that

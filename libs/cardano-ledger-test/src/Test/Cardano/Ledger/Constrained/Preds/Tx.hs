@@ -65,7 +65,7 @@ import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars hiding (totalAda)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..), mkWitnessVKey)
 import Test.Cardano.Ledger.Generic.Functions (TotalAda (totalAda), isValid')
-import Test.Cardano.Ledger.Generic.PrettyCore (pcLedgerState, pcTx, pcTxBody)
+import Test.Cardano.Ledger.Generic.PrettyCore (pcLedgerState, pcTx)
 import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Generic.TxGen (applySTSByProof)
 import Test.Cardano.Ledger.Generic.Updaters (newScriptIntegrityHash)
@@ -515,7 +515,7 @@ updateTarget adjust term@(Var v) delta env = do
 updateTarget _ v _ _ = failT ["Non Var in updateTarget: " ++ show v]
 
 override :: x -> x -> x
-override x y = y
+override _x y = y
 
 -- ========================================
 

@@ -1854,7 +1854,7 @@ genAddsSpec = do
   lhs <- fromI @c ["genAddsSpec"] <$> choose @Int (-25, 25)
   elements [varOnLeft v c rhs, varOnRight lhs c rhs v]
 
-genNonNegAddsSpec :: Gen (AddsSpec c)
+genNonNegAddsSpec :: forall c. Adds c => Gen (AddsSpec c)
 genNonNegAddsSpec = do
   v <- elements ["x", "y"]
   c <- genOrdCond
@@ -1863,7 +1863,8 @@ genNonNegAddsSpec = do
   let lhs' = case c of
         LTH -> lhs + 1
         _ -> lhs
-  elements [varOnLeft v c rhs, varOnRight lhs' c rhs v]
+      fromX x = fromI @c ["genNonNegAddsSpec"] x
+  elements [varOnLeft v c $ fromX rhs, varOnRight (fromX lhs') c (fromX rhs) v]
 
 genOrdCond :: Gen OrdCond
 genOrdCond = elements [EQL, LTH, LTE, GTH, GTE]

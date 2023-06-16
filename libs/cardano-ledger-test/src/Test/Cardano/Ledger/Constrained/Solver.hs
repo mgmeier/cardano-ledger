@@ -515,24 +515,24 @@ solveSum v1@(V nam r _) predx =
       DeltaCoin n <- simplifyAtType DeltaCoinR expr
       pure $ varOnLeft nam EQL (DeltaCoin (-n))
     (Random (Var v2)) | Name v1 == Name v2 -> pure AddsSpecAny
-    (SumsTo _ (Delta (Lit _ n)) cond xs@(_ : _)) -> do
+    (SumsTo x (Delta (Lit _ n)) cond xs@(_ : _)) -> do
       (rhsTotal, needsNeg) <- intSumWithUniqueV v1 xs
       case r of
         CoinR ->
           if needsNeg
-            then pure (varOnRightNeg n cond (fromI ["solveSum-SumsTo"] rhsTotal) nam)
-            else pure (varOnRight n cond (fromI ["solveSum-SumsTo"] rhsTotal) nam)
+            then pure (varOnRightNeg n cond (fromI ["solveSum-SumsTo 1"] rhsTotal) nam)
+            else pure (varOnRight n cond (fromI ["solveSum-SumsTo 2", show n, show rhsTotal, show x, show v1] rhsTotal) nam)
         DeltaCoinR ->
           if needsNeg
-            then pure (varOnRightNeg n cond (fromI ["solveSum-SumsTo"] rhsTotal) nam)
-            else pure (varOnRight n cond (fromI ["solveSum-SumsTo"] rhsTotal) nam)
+            then pure (varOnRightNeg n cond (fromI ["solveSum-SumsTo 3"] rhsTotal) nam)
+            else pure (varOnRight n cond (fromI ["solveSum-SumsTo 4"] rhsTotal) nam)
         other -> failT [show predx, show other ++ " should be either Coin or DeltaCoin"]
     (SumsTo _ (Lit r2 n) cond xs@(_ : _)) -> do
       (rhsTotal, needsNeg) <- intSumWithUniqueV v1 xs
       Refl <- sameRep r r2
       if needsNeg
-        then pure (varOnRightNeg n cond (fromI ["solveSum-SumsTo"] rhsTotal) nam)
-        else pure (varOnRight n cond (fromI ["solveSum-SumsTo"] rhsTotal) nam)
+        then pure (varOnRightNeg n cond (fromI ["solveSum-SumsTo 5"] rhsTotal) nam)
+        else pure (varOnRight n cond (fromI ["solveSum-SumsTo 6"] rhsTotal) nam)
     (SumsTo _ (Var v2@(V _ r2 _)) cond xs@(_ : _)) | Name v1 == Name v2 -> do
       rhsTotal <- summandsAsInt xs
       Refl <- sameRep r r2
