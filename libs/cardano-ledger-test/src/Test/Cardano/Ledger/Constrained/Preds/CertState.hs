@@ -2,7 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Test.Cardano.Ledger.Constrained.Preds.DPState where
+module Test.Cardano.Ledger.Constrained.Preds.CertState where
 
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Pretty (ppMap)

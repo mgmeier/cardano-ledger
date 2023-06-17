@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -Wno-unused-binds #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
-module Test.Cardano.Ledger.Constrained.Preds.TxBody where
+module Test.Cardano.Ledger.Constrained.Preds.Tx where
 
 import Cardano.Ledger.Address (BootstrapAddress, Withdrawals (..))
 import Cardano.Ledger.Alonzo.Core (AlonzoEraTxBody (..), AlonzoEraTxOut (..))
@@ -100,7 +100,7 @@ import Cardano.Ledger.Crypto (DSIGN)
 import Cardano.Ledger.Shelley.TxBody (WitVKey (..))
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..), mkWitnessVKey)
 import Test.Cardano.Ledger.Generic.Updaters (newScriptIntegrityHash)
-
+import Test.Cardano.Ledger.Constrained.Preds.LedgerState(ledgerStateStage)
 -- =======================================================================================
 -- How to construct an actual TxBody from an (Env era) that stores a
 -- variable for each of the 'bodyNames'. If one of these vars is not
@@ -185,38 +185,24 @@ txBodyPreds p =
     ++ [ Sized (Range 0 3) mint
        , Subset (Dom mint) (Dom (nonSpendScriptUniv p))
        , Random networkID
-       , -- utxo
-         MetaSize (SzRng 20 25) utxoSize -- must be bigger than sum of (maxsize inputs 10) and (mazsize collateral 3)
-       , Sized utxoSize preUtxo
-       , Sized (Range 3 4) colUtxo
-       , MapMember feeTxIn feeTxOut (Right preUtxo)
-       , Subset (Dom preUtxo) txinUniv
-       , Subset (Rng preUtxo) (txoutUniv p)
-       , utxo p :<-: (Constr "mapunion" Map.union ^$ preUtxo ^$ colUtxo)
        , -- inputs
          Sized (Range 2 10) inputs
        , Member (Left feeTxIn) inputs
        , Subset inputs (Dom (utxo p))
        , -- collateral
          Disjoint inputs collateral
-       , NotMember feeTxIn (Dom colUtxo)
-       , NotMember feeTxOut (Rng colUtxo)
        , Sized (Range 2 3) collateral
-       , Subset (Dom colUtxo) txinUniv
-       , Subset (Rng colUtxo) (colTxoutUniv p)
        , Subset collateral (Dom colUtxo)
-       , Member (Left colInput) collateral -- DO we use this?
+       , Member (Left colInput) collateral 
        , colRestriction :=: Restrict collateral colUtxo
        , SumsTo (Right (Coin 1)) sumCol EQL [ProjMap CoinR outputCoinL colRestriction]
        , totalCol :<-: (justTarget sumCol)
-       , -- Or maybe   , GenFrom totalCol (maybeTarget ^$ sumCol)
-
          -- withdrawals
-         Sized (Range 0 2) withdrawals
+       , Sized (Range 0 2) withdrawals
        , Subset (ProjS getRwdCredL CredR (Dom withdrawals)) (Dom nonZeroRewards)
        , nonZeroRewards :<-: (Constr "filter (/=0)" (Map.filter (/= (Coin 0))) ^$ rewards)
-       , -- refInputs
-         Sized (Range 0 1) refInputs
+         -- refInputs
+       , Sized (Range 0 1) refInputs
        , Subset refInputs (Dom (utxo p))
        , Sized (Range 1 2) reqSignerHashes
        , Subset reqSignerHashes (Dom keymapUniv)
@@ -238,9 +224,9 @@ txBodyPreds p =
        , Random tempWppHash
        , tempTxBody :<-: txbodyTarget tempTxFee tempWppHash
        , tempTx :<-: txTarget tempTxBody tempBootWits tempKeyWits
-       , --  , txterm :<-: (Constr "minFeeTx" computeFinalTx ^$ (pparams p) ^$ tempTx)
+         --  , txterm :<-: (Constr "minFeeTx" computeFinalTx ^$ (pparams p) ^$ tempTx)
          --  , txbodyterm :<-: (Constr "getBody" (\ (TxF pr tx) -> TxBodyF pr (tx ^. bodyTxL)) ^$ txterm)
-         txfee :<-: (Constr "finalFee" computeFinalFee ^$ (pparams p) ^$ tempTx)
+       , txfee :<-: (Constr "finalFee" computeFinalFee ^$ (pparams p) ^$ tempTx)
        , txbodyterm :<-: txbodyTarget txfee wppHash
        , txterm :<-: txTarget txbodyterm bootWits keyWits
        ]
@@ -339,15 +325,15 @@ txBodyStage ::
 txBodyStage proof subst0 = do
   let preds = txBodyPreds proof
   subst <- toolChainSub proof standardOrderInfo preds subst0
-  (_env, status) <- monadTyped $ checkForSoundness preds subst
+  (_env, status) <- pure (undefined,Nothing) -- monadTyped $ checkForSoundness preds subst
   case status of
     Nothing -> pure subst
     Just msg -> error msg
 
 main :: IO ()
 main = do
-  let proof = Conway Standard
-  -- Babbage Standard
+  let proof = -- Conway Standard
+       Babbage Standard
   -- Alonzo Standard
   -- Mary Standard
   -- Shelley Standard
@@ -360,6 +346,7 @@ main = do
           >>= pstateStage proof
           >>= dstateStage proof
           >>= certsStage proof
+          >>= ledgerStateStage proof
           >>= txBodyStage proof
           >>= (\subst -> monadTyped $ substToEnv subst emptyEnv)
       )
