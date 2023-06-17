@@ -152,6 +152,7 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcFutureGenDeleg,
   pcGenDelegPair,
   pcIndividualPoolStake,
+  pcLedgerState,
   pcMultiAsset,
   pcPParamsSynopsis,
   pcReward,
@@ -263,6 +264,7 @@ data Rep era t where
   CommColdHashR :: Rep era (KeyHash 'CommitteeColdKey (EraCrypto era))
   CommHotHashR :: Rep era (KeyHash 'CommitteeHotKey (EraCrypto era))
   LanguageR :: Rep era Language
+  LedgerStateR :: Proof era -> Rep era (LedgerState era)
 
 stringR :: Rep era String
 stringR = ListR CharR
@@ -383,6 +385,8 @@ instance Singleton (Rep e) where
   testEql CommColdHashR CommColdHashR = Just Refl
   testEql CommHotHashR CommHotHashR = Just Refl
   testEql LanguageR LanguageR = Just Refl
+  testEql (LedgerStateR c) (LedgerStateR d) =
+    do Refl <- testEql c d; pure Refl
   testEql _ _ = Nothing
 
   cmpIndex x y = compare (shape x) (shape y)
@@ -473,6 +477,7 @@ instance Show (Rep era t) where
   show CommColdHashR = "CommColdHash"
   show CommHotHashR = "CommHotHash"
   show LanguageR = "Language"
+  show (LedgerStateR p) = "(LedgerState " ++ short p ++ ")"
 
 synopsis :: forall e t. Rep e t -> t -> String
 synopsis RationalR r = show r
@@ -568,6 +573,7 @@ synopsis (TxAuxDataR _) x = show x
 synopsis CommColdHashR x = show x
 synopsis CommHotHashR x = show x
 synopsis LanguageR x = show x
+synopsis (LedgerStateR p) x = show ((unReflect pcLedgerState p x) :: PDoc)
 
 synSum :: Rep era a -> a -> String
 synSum (MapR _ CoinR) m = ", sum = " ++ show (pcCoin (Map.foldl' (<>) mempty m))
@@ -680,6 +686,7 @@ instance Shaped (Rep era) any where
   shape CommColdHashR = Nullary 79
   shape CommHotHashR = Nullary 80
   shape LanguageR = Nullary 81
+  shape (LedgerStateR p) = Nary 82 [shape p]
 
 compareRep :: forall era t s. Rep era t -> Rep era s -> Ordering
 compareRep x y = cmpIndex @(Rep era) x y
@@ -712,7 +719,7 @@ genSizedRep _ Word64R = choose (0, 1000)
 genSizedRep _ IntR = arbitrary
 genSizedRep _ NaturalR = arbitrary
 genSizedRep _ FloatR = arbitrary
-genSizedRep n TxInR = TxIn <$> arbitrary <*> pure (mkTxIxPartial (fromIntegral (min n (fromIntegral (maxBound :: Word16)))))
+genSizedRep n TxInR = TxIn <$> arbitrary <*> (mkTxIxPartial . fromIntegral <$> choose (2, min n (fromIntegral (maxBound :: Word16))))
 genSizedRep _ CharR = arbitrary
 genSizedRep _ (ValueR p) = genValue p
 genSizedRep _ (TxOutR p) = genTxOut p
@@ -812,6 +819,13 @@ genSizedRep _ (TxAuxDataR p) = genTxAuxDataF p
 genSizedRep _ CommColdHashR = arbitrary
 genSizedRep _ CommHotHashR = arbitrary
 genSizedRep _ LanguageR = arbitrary
+genSizedRep _ (LedgerStateR p) = case p of
+  Shelley _ -> arbitrary
+  Allegra _ -> arbitrary
+  Mary _ -> arbitrary
+  Alonzo _ -> arbitrary
+  Babbage _ -> arbitrary
+  Conway _ -> arbitrary
 
 genRep ::
   Era era =>
@@ -943,6 +957,7 @@ shrinkRep (TxAuxDataR _) _ = []
 shrinkRep CommColdHashR x = shrink x
 shrinkRep CommHotHashR x = shrink x
 shrinkRep LanguageR x = shrink x
+shrinkRep (LedgerStateR _) _ = []
 
 -- ===========================
 
@@ -1056,6 +1071,7 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help CommColdHashR x = pure $ With x
     help CommHotHashR x = pure $ With x
     help LanguageR x = pure $ With x
+    help (LedgerStateR _) _ = failT ["LedgerState does not have Ord instance"]
 
 hasEq :: Rep era t -> s t -> Typed (HasConstraint Eq (s t))
 hasEq rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)

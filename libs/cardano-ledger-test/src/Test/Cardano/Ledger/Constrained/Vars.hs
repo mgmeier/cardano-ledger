@@ -17,6 +17,7 @@ import qualified Cardano.Ledger.CertState as DPS (InstantaneousRewards (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin)
 import Cardano.Ledger.Core (
   EraPParams,
+  EraTxOut (mkBasicTxOut),
   PParams,
   TxAuxData,
   TxBody,
@@ -794,6 +795,9 @@ accountStateT = Constr "AccountState" AccountState ^$ treasury ^$ reserves
 ledgerStateT :: Proof era -> Target era (LedgerState era)
 ledgerStateT proof = Constr "LedgerState" LedgerState :$ utxoStateT proof :$ dpstateT
 
+ledgerState :: Reflect era => Term era (LedgerState era)
+ledgerState = Var $ V "ledgerState" (LedgerStateR reify) No
+
 -- | Target for UTxOState
 utxoStateT :: Proof era -> Target era (UTxOState era)
 utxoStateT p = Constr "UTxOState" (utxofun p) ^$ (pparams p) ^$ utxo p ^$ deposits ^$ fees :$ governanceStateT p
@@ -1069,6 +1073,13 @@ extraCol = Var $ V "extraCol" CoinR No
 sumCol :: Term era Coin
 sumCol = Var $ V "sumCol" CoinR No
 
+colRetAddr :: Term era (Addr (EraCrypto era))
+colRetAddr = Var $ V "colRetAddr" AddrR No
+
+-- | The Coin in the 'collateralReturn' TxOut
+colRetCoin :: Term era Coin
+colRetCoin = Var $ V "colRetCoin" CoinR No
+
 -- | The amount that the collateral must cover if there is a two phase error.
 --   This is roughly the 'collateralPercentage' * 'txfee' . The calculation deals with rounding,
 --   but you don't need those details to understand what is going on.
@@ -1199,7 +1210,7 @@ keyWits = Var $ V "keyWits" (SetR (WitVKeyR reify)) No
 -- passes, the targets are parameterized by the things that change between the first and
 -- second passes. Here is an accounting of the things that change
 -- 1) witsTarget: The witnesses that depend on the hash of the TxBody 'bootWits' and 'keyWits'
--- 2) txbodyTarget: 'txfee' and 'wppHash'
+-- 2) txbodyTarget: 'txfee' , 'totaland 'wppHash'
 -- 3) txTarget:  'txbodyterm', 'bootWits', and 'keyWits', since a Tx has both a body and witnesses
 
 witsTarget ::
