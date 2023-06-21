@@ -124,19 +124,17 @@ addVote gaid role kh decision (ConwayTallyState st) =
 addAction ::
   EpochNo ->
   GovernanceActionId (EraCrypto era) ->
-  Coin ->
   KeyHash 'Staking (EraCrypto era) ->
   GovernanceAction era ->
   ConwayTallyState era ->
   ConwayTallyState era
-addAction epoch gaid c addr act (ConwayTallyState st) =
+addAction epoch gaid addr act (ConwayTallyState st) =
   ConwayTallyState $
     Map.insert gaid gai' st
   where
     gai' =
       GovernanceActionState
         { gasVotes = mempty
-        , gasDeposit = c
         , gasProposedIn = epoch
         , gasAction = act
         , gasReturnAddr = addr

@@ -51,6 +51,7 @@ library
         Cardano.Ledger.Conway.Rules.Ratify
         Cardano.Ledger.Conway.Rules.Tally
         Cardano.Ledger.Conway.Rules.Tickf
+        Cardano.Ledger.Conway.Rules.Utxo
         Cardano.Ledger.Conway.Rules.Utxos
         Cardano.Ledger.Conway.Rules.Utxow
 
