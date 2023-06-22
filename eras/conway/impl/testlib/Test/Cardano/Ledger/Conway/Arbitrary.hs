@@ -87,6 +87,7 @@ instance
     RatifyState
       <$> arbitrary
       <*> arbitrary
+      <*> arbitrary
 
 instance
   (Era era, Arbitrary (PParams era), Arbitrary (PParamsUpdate era)) =>
@@ -107,7 +108,6 @@ instance (Era era, Arbitrary (PParamsUpdate era)) => Arbitrary (GovernanceAction
   arbitrary =
     GovernanceActionState
       <$> arbitrary
-      <*> arbitrary
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
@@ -188,7 +188,7 @@ instance Era era => Arbitrary (VotingProcedure era) where
   arbitrary = VotingProcedure <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
 
 instance (Era era, Arbitrary (PParamsUpdate era)) => Arbitrary (ProposalProcedure era) where
-  arbitrary = ProposalProcedure <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+  arbitrary = ProposalProcedure <$> arbitrary <*> arbitrary <*> arbitrary
 
 instance (Era era, Arbitrary (PParamsUpdate era)) => Arbitrary (GovernanceProcedure era) where
   arbitrary =

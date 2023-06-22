@@ -80,8 +80,7 @@ voting_procedure =
   ]
 
 proposal_procedure =
-  [ deposit : coin
-  , $hash28
+  [ $hash28
   , governance_action
   , anchor / null
   ]

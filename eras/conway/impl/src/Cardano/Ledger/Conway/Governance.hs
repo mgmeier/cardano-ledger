@@ -261,8 +261,7 @@ toVotingProcedurePairs vProc@(VotingProcedure _ _ _ _ _) =
       ]
 
 data ProposalProcedure era = ProposalProcedure
-  { pProcDeposit :: !Coin
-  , pProcReturnAddr :: !(KeyHash 'Staking (EraCrypto era))
+  { pProcReturnAddr :: !(KeyHash 'Staking (EraCrypto era))
   , pProcGovernanceAction :: !(GovernanceAction era)
   , pProcAnchor :: !(StrictMaybe (Anchor (EraCrypto era)))
   }
@@ -278,14 +277,12 @@ instance EraPParams era => DecCBOR (ProposalProcedure era) where
       RecD ProposalProcedure
         <! From
         <! From
-        <! From
         <! D (decodeNullStrictMaybe decCBOR)
 
 instance EraPParams era => EncCBOR (ProposalProcedure era) where
   encCBOR ProposalProcedure {..} =
     encode $
       Rec (ProposalProcedure @era)
-        !> To pProcDeposit
         !> To pProcReturnAddr
         !> To pProcGovernanceAction
         !> E (encodeNullStrictMaybe encCBOR) pProcAnchor

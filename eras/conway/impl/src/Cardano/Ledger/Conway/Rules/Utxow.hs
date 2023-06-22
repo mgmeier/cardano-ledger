@@ -25,13 +25,11 @@ import Cardano.Ledger.Alonzo.Rules (
   missingRequiredDatums,
   ppViewHashesMatch,
  )
-import Cardano.Ledger.Alonzo.Rules as Alonzo (AlonzoUtxoEvent)
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript)
 import Cardano.Ledger.Alonzo.Tx (AlonzoEraTx)
 import Cardano.Ledger.Alonzo.TxInfo (ExtendedUTxO (..))
 import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded)
 import Cardano.Ledger.Babbage.Rules (
-  BabbageUTXO,
   BabbageUtxoPredFailure,
   BabbageUtxowPredFailure (..),
   babbageMissingScripts,
@@ -41,7 +39,7 @@ import Cardano.Ledger.Babbage.Rules (
 import Cardano.Ledger.Babbage.Tx (refScripts)
 import Cardano.Ledger.BaseTypes (ShelleyBase)
 import Cardano.Ledger.Conway.Core
-import Cardano.Ledger.Conway.Era (ConwayUTXOW)
+import Cardano.Ledger.Conway.Era (ConwayUTXOW, ConwayUTXO)
 import Cardano.Ledger.Conway.Governance (VotingProcedure (..))
 import Cardano.Ledger.Credential (credKeyHashWitness)
 import Cardano.Ledger.Crypto (DSIGN, HASH)
@@ -210,14 +208,16 @@ instance
 
 instance
   ( Era era
-  , STS (BabbageUTXO era)
+  , STS (ConwayUTXO era)
   , PredicateFailure (EraRule "UTXO" era) ~ BabbageUtxoPredFailure era
-  , Event (EraRule "UTXO" era) ~ AlonzoUtxoEvent era
   , BaseM (ConwayUTXOW era) ~ ShelleyBase
   , PredicateFailure (ConwayUTXOW era) ~ BabbageUtxowPredFailure era
   , Event (ConwayUTXOW era) ~ AlonzoUtxowEvent era
+  , BaseM (ConwayUTXO era) ~ ShelleyBase
+  , PredicateFailure (ConwayUTXO era) ~ BabbageUtxoPredFailure era
+  , Event (EraRule "UTXO" era) ~ Event (ConwayUTXO era)
   ) =>
-  Embed (BabbageUTXO era) (ConwayUTXOW era)
+  Embed (ConwayUTXO era) (ConwayUTXOW era)
   where
   wrapFailed = UtxoFailure
   wrapEvent = WrappedShelleyEraEvent . UtxoEvent

@@ -15,7 +15,7 @@
 module Cardano.Ledger.Babbage.Rules.Utxo (
   BabbageUTXO,
   BabbageUtxoPredFailure (..),
-  utxoTransition,
+  babbageUtxoTransition,
   feesOK,
   validateTotalCollateral,
   validateCollateralEqBalance,
@@ -284,28 +284,33 @@ validateOutputTooSmallUTxO pp outs =
         outs'
 
 -- | The UTxO transition rule for the Babbage eras.
-utxoTransition ::
+babbageUtxoTransition ::
   forall era.
   ( EraTx era
   , EraUTxO era
   , BabbageEraTxBody era
   , AlonzoEraTxWits era
-  , Tx era ~ AlonzoTx era
-  , STS (BabbageUTXO era)
-  , -- In this function we we call the UTXOS rule, so we need some assumptions
-    Embed (EraRule "UTXOS" era) (BabbageUTXO era)
   , Environment (EraRule "UTXOS" era) ~ UtxoEnv era
   , State (EraRule "UTXOS" era) ~ Shelley.UTxOState era
   , Signal (EraRule "UTXOS" era) ~ Tx era
-  , Inject (PPUPPredFailure era) (PredicateFailure (EraRule "UTXOS" era))
+  , Environment (EraRule "UTXO" era) ~ UtxoEnv era
+  , State (EraRule "UTXO" era) ~ Shelley.UTxOState era
+  , Signal (EraRule "UTXO" era) ~ Tx era
+  , STS (EraRule "UTXO" era)
+  , BaseM (EraRule "UTXO" era) ~ ShelleyBase
+  , Embed (EraRule "UTXOS" era) (EraRule "UTXO" era)
+  , Inject (AllegraUtxoPredFailure era) (PredicateFailure (EraRule "UTXO" era))
+  , Inject (AlonzoUtxoPredFailure era) (PredicateFailure (EraRule "UTXO" era))
+  , Inject (ShelleyUtxoPredFailure era) (PredicateFailure (EraRule "UTXO" era))
+  , Inject (BabbageUtxoPredFailure era) (PredicateFailure (EraRule "UTXO" era))
   ) =>
-  TransitionRule (BabbageUTXO era)
-utxoTransition = do
+  TransitionRule (EraRule "UTXO" era)
+babbageUtxoTransition = do
   TRC (Shelley.UtxoEnv slot pp dpstate _genDelegs, u, tx) <- judgmentContext
   let Shelley.UTxOState utxo _deposits _fees _ppup _ = u
 
   {-   txb := txbody tx   -}
-  let txBody = body tx
+  let txBody = tx ^. bodyTxL
       allInputs = txBody ^. allInputsTxBodyF
 
   {- ininterval slot (txvld txb) -}
@@ -382,8 +387,11 @@ instance
   , Environment (EraRule "UTXOS" era) ~ UtxoEnv era
   , State (EraRule "UTXOS" era) ~ Shelley.UTxOState era
   , Signal (EraRule "UTXOS" era) ~ Tx era
-  , Inject (PPUPPredFailure era) (PredicateFailure (EraRule "UTXOS" era))
   , PredicateFailure (EraRule "UTXO" era) ~ BabbageUtxoPredFailure era
+  , STS (EraRule "UTXO" era)
+  , Embed (EraRule "UTXOS" era) (EraRule "UTXO" era)
+  , EraRule "UTXO" era ~ BabbageUTXO era
+  , Inject (PPUPPredFailure era) (PredicateFailure (EraRule "UTXOS" era))
   ) =>
   STS (BabbageUTXO era)
   where
@@ -395,7 +403,7 @@ instance
   type Event (BabbageUTXO era) = AlonzoUtxoEvent era
 
   initialRules = []
-  transitionRules = [utxoTransition]
+  transitionRules = [babbageUtxoTransition]
 
 instance
   ( Era era

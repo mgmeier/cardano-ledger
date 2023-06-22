@@ -135,10 +135,11 @@ ratifyTransition = do
         then do
           -- Update ENACT state with the governance action that was ratified
           es <- trans @(EraRule "ENACT" era) $ TRC ((), rsEnactState, gasAction)
-          let st' = st
-                { rsEnactState = es
-                , rsRemoved = act :<| rsRemoved
-                }
+          let st' =
+                st
+                  { rsEnactState = es
+                  , rsRemoved = act :<| rsRemoved
+                  }
           trans @(ConwayRATIFY era) $ TRC (env, st', RatifySignal sigs)
         else do
           st' <- trans @(ConwayRATIFY era) $ TRC (env, st, RatifySignal sigs)

@@ -26,7 +26,6 @@ module Cardano.Ledger.Conway.Rules.Tally (
 import Cardano.Ledger.BaseTypes (EpochNo (..), ShelleyBase)
 import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..), FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.Binary.Coders (Decode (..), Encode (..), decode, encode, (!>), (<!))
-import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Conway.Era (ConwayTALLY)
 import Cardano.Ledger.Conway.Governance (
   ConwayTallyState (..),
@@ -171,12 +170,11 @@ tallyTransition = do
               runTest $ voterHasRole @era vProcRoleKeyHash vProcRole vRoles
               pure $ addVote vProcGovActionId vProcRole vProcRoleKeyHash vProcVote st'
           GovernanceProposalProcedure
-            ProposalProcedure {pProcDeposit, pProcReturnAddr, pProcGovernanceAction} ->
+            ProposalProcedure {pProcReturnAddr, pProcGovernanceAction} ->
               pure $
                 addAction
                   epoch
                   (GovernanceActionId txid idx)
-                  pProcDeposit
                   pProcReturnAddr
                   pProcGovernanceAction
                   st'
