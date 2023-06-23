@@ -48,7 +48,7 @@ nonNegativeInterval r = case (boundRational @NonNegativeInterval r) of
 genPParams :: Reflect era => Proof era -> Natural -> Natural -> Natural -> Gen (PParamsF era)
 genPParams proof tx bb bh = do
   maxTxExUnits2 <- ExUnits <$> (fromIntegral <$> choose (100 :: Int, 10000)) <*> (fromIntegral <$> choose (100 :: Int, 10000))
-  maxCollateralInputs <- elements [2 .. 5]
+  maxCollateralInputs <- elements [3 .. 5]
   collateralPercentage2 <- fromIntegral <$> chooseInt (1, 200)
   minfeeA <- Coin <$> choose (0, 100)
   minfeeB <- Coin <$> choose (0, 10)
@@ -89,7 +89,7 @@ pParamsPreds p =
   , extract (keyDepAmt p) (pparams p)
   , extract (poolDepAmt p) (pparams p)
   , Sized (AtLeast 100) (maxBHSize p)
-  , Sized (AtLeast 100) (maxTxSize p)
+  , Sized (AtLeast 20000) (maxTxSize p)
   , SumsTo (Right 1) (maxBBSize p) LTE [One (maxBHSize p), One (maxTxSize p)]
   , (protVer p) `CanFollow` (prevProtVer p)
   ]

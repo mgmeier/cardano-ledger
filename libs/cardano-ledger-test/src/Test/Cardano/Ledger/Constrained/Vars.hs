@@ -714,6 +714,8 @@ plutusUniv = Var $ V "plutusUniv" (MapR ScriptHashR (PairR IsValidR (ScriptR rei
 spendPlutusUniv :: Reflect era => Term era (Map (ScriptHash (EraCrypto era)) (IsValid, ScriptF era))
 spendPlutusUniv = Var $ V "spendPlutusUniv" (MapR ScriptHashR (PairR IsValidR (ScriptR reify))) No
 
+-- | The universe of all Byron addresses. In Eras, Babbage, Conway we avoid these Adresses,
+--   as they do not play well with Plutus Scripts.
 byronAddrUniv :: Term era (Map (KeyHash 'Payment (EraCrypto era)) (Addr (EraCrypto era), SigningKey))
 byronAddrUniv = Var $ V "byronAddrUniv" (MapR PayHashR (PairR AddrR SigningKeyR)) No
 
@@ -1001,8 +1003,10 @@ outputs p = Var $ V "outputs" (ListR (TxOutR p)) No
 collateralReturn :: Proof era -> Term era (TxOutF era)
 collateralReturn p = Var $ V "collateralReturn" (TxOutR p) No
 
-totalCol :: Term era (Maybe Coin)
-totalCol = Var $ V "totalCol" (MaybeR CoinR) No
+-- | The sum of all the 'collateral' inputs. The Tx is constucted
+--   by SNothing or wrapping 'SJust' around this value.
+totalCol :: Term era Coin
+totalCol = Var $ V "totalCol" CoinR No
 
 certs :: Reflect era => Term era [TxCertF era]
 certs = Var $ V "certs" (ListR (TxCertR reify)) No
@@ -1069,7 +1073,7 @@ colInput = Var (V "colInput" TxInR No)
 extraCol :: Term era Coin
 extraCol = Var $ V "extraCol" CoinR No
 
--- | The sum of all the 'collateral' inputs, 'totalCol' should be (SJust 'sumCol')
+-- | The sum of all the 'collateral' inputs, total colateral of the Tx is computed by adding (SJust _) to this value.
 sumCol :: Term era Coin
 sumCol = Var $ V "sumCol" CoinR No
 
@@ -1248,8 +1252,8 @@ txTarget bodyparam bootWitsParam keyWitsParam = Constr "tx" txf ^$ bodyparam :$ 
 
 -- | Need to build the TxBody with different terms that control the fee and wppHash so we
 --   parameterise this target over those two terms
-txbodyTarget :: Reflect era => Term era Coin -> Term era (Maybe (ScriptIntegrityHash (EraCrypto era))) -> Target era (TxBodyF era)
-txbodyTarget feeparam wpphashparam =
+txbodyTarget :: Reflect era => Term era Coin -> Term era (Maybe (ScriptIntegrityHash (EraCrypto era))) -> Term era Coin -> Target era (TxBodyF era)
+txbodyTarget feeparam wpphashparam totalColParam =
   Constr "txbody" txbodyf
     ^$ inputs
     ^$ collateral
@@ -1257,7 +1261,7 @@ txbodyTarget feeparam wpphashparam =
     ^$ (outputs proof)
     ^$ (collateralReturn proof)
     -- \^$ updates
-    ^$ totalCol
+    ^$ totalColParam
     ^$ certs
     ^$ withdrawals
     ^$ ttl
@@ -1276,8 +1280,8 @@ txbodyTarget feeparam wpphashparam =
       refs
       out
       (TxOutF _ colret)
+      totcol
       --    updates
-      tot
       cs
       ws
       tt
@@ -1298,7 +1302,7 @@ txbodyTarget feeparam wpphashparam =
               , Outputs' (map unTxOut out)
               , CollateralReturn (SJust colret)
               , -- , Update upd
-                TotalCol (maybeToStrictMaybe tot)
+                TotalCol (SJust totcol)
               , Certs' (map unTxCertF cs)
               , Withdrawals' (Withdrawals ws)
               , Txfee fee

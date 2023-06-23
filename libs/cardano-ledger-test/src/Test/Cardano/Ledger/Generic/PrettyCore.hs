@@ -199,7 +199,7 @@ instance CC.Crypto c => PrettyCore (BabbageEra c) where
   prettyScript = ppScript
   prettyTxBody = Babbage.ppTxBody
   prettyWitnesses = ppTxWitness
-  prettyValue = ppValue
+  prettyValue = pcValue
   prettyTxOut = Babbage.ppTxOut
 
 instance CC.Crypto c => PrettyCore (ConwayEra c) where

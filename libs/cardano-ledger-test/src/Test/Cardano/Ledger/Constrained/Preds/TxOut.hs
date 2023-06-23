@@ -8,6 +8,7 @@
 module Test.Cardano.Ledger.Constrained.Preds.TxOut where
 
 import Cardano.Crypto.Hash.Class (Hash, HashAlgorithm, castHash, hashWith)
+import Cardano.Ledger.Address (Addr (..))
 import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), dataToBinaryData, hashData)
 import Cardano.Ledger.Alonzo.TxOut (AlonzoEraTxOut (..), AlonzoTxOut (..))
 import Cardano.Ledger.Babbage.TxOut (BabbageEraTxOut (..), BabbageTxOut (..))
@@ -100,6 +101,10 @@ txoutDataHashF =
 
 txoutDataHash :: (Reflect era, AlonzoEraTxOut era) => Term era (Maybe (DataHash (EraCrypto era)))
 txoutDataHash = fieldToTerm txoutDataHashF
+
+isBootstrapAddr :: Addr c -> Bool
+isBootstrapAddr (AddrBootstrap _) = True
+isBootstrapAddr (Addr _ _ _) = False
 
 {-
 -- ==============================================

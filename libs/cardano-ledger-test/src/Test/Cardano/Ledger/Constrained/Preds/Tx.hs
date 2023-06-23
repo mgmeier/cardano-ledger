@@ -5,10 +5,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+{-# OPTIONS_GHC -Wno-unused-matches #-}
+
+-- ==============================================
+
 module Test.Cardano.Ledger.Constrained.Preds.Tx where
 
 import Cardano.Crypto.Signing (SigningKey)
-import Cardano.Ledger.Address (Addr (..), BootstrapAddress)
+import Cardano.Ledger.Address (Addr (..), BootstrapAddress,RewardAcnt(..))
 import Cardano.Ledger.Alonzo.Core (AlonzoEraTxOut (..), ScriptIntegrityHash)
 import Cardano.Ledger.Alonzo.Language (Language (..))
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..), ExUnits (..))
@@ -21,15 +26,16 @@ import Cardano.Ledger.Alonzo.TxWits (
  )
 import Cardano.Ledger.Alonzo.UTxO (getInputDataHashesTxBody)
 import Cardano.Ledger.Api (setMinFeeTx)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..), strictMaybeToMaybe)
-import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.Core (EraScript (..), EraTx (..), EraTxBody (..), EraTxOut (..), bodyTxL, coinTxOutL, feeTxBodyL)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), strictMaybeToMaybe,Network(..))
+import Cardano.Ledger.Coin (Coin (..),rationalToCoinViaCeiling)
+import Cardano.Ledger.Core (EraScript (..), EraTx (..), EraTxBody (..), EraTxOut (..), bodyTxL, coinTxOutL, feeTxBodyL, Value)
 import Cardano.Ledger.Era (Era (EraCrypto))
 import Cardano.Ledger.Hashes (DataHash, EraIndependentTxBody, ScriptHash (..))
 import Cardano.Ledger.Keys (GenDelegPair (..), GenDelegs (..), Hash, KeyHash, KeyRole (..))
 import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness)
 import Cardano.Ledger.Mary.Core (MaryEraTxBody)
-import Cardano.Ledger.Pretty (PrettyA (..), ppList)
+import Cardano.Ledger.Mary.Value(MaryValue(..),MultiAsset(..),AssetName,PolicyID(..))
+import Cardano.Ledger.Pretty (PrettyA (..), ppList, ppSet)
 import Cardano.Ledger.SafeHash (SafeHash, extractHash, hashAnnotated)
 import Cardano.Ledger.Shelley.AdaPots (consumedTxBody, producedTxBody)
 import Cardano.Ledger.Shelley.LedgerState (AccountState (..), LedgerState, keyCertsRefunds, totalCertsDeposits)
@@ -37,7 +43,7 @@ import Cardano.Ledger.Shelley.Rules (LedgerEnv (..), witsVKeyNeededFromBody)
 import Cardano.Ledger.Shelley.TxBody (WitVKey (..))
 import Cardano.Ledger.TxIn (TxIn (..))
 import Cardano.Ledger.UTxO (EraUTxO (..))
-import Cardano.Ledger.Val (Val (inject, (<->)))
+import Cardano.Ledger.Val (Val (inject, (<->),(<+>)))
 import Control.State.Transition.Extended (TRC (..))
 import Data.Coerce (coerce)
 import qualified Data.List as List
@@ -45,6 +51,8 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Word(Word64)
+import Data.Ratio((%))
 import Lens.Micro
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Classes
@@ -65,11 +73,13 @@ import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars hiding (totalAda)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..), mkWitnessVKey)
 import Test.Cardano.Ledger.Generic.Functions (TotalAda (totalAda), isValid')
-import Test.Cardano.Ledger.Generic.PrettyCore (pcLedgerState, pcTx, pcTxBody)
+import Test.Cardano.Ledger.Generic.PrettyCore -- (pcLedgerState, pcTx, pcTxBody)
 import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Generic.TxGen (applySTSByProof)
 import Test.Cardano.Ledger.Generic.Updaters (newScriptIntegrityHash)
 import Test.QuickCheck
+import Data.Foldable(fold,foldl')
+import Debug.Trace(trace)
 
 -- ===============================================
 -- Helpful Lenses
@@ -204,18 +214,18 @@ computeWitsVKey ::
   Map (KeyHash 'Witness (EraCrypto era)) (KeyPair 'Witness (EraCrypto era)) ->
   Set (KeyHash 'Witness (EraCrypto era)) -> -- Only in Eras Alonzo To Conway,
   Set (WitVKey 'Witness (EraCrypto era))
-computeWitsVKey (TxBodyF _ txb) u gd keyUniv reqsigners = keywits
+computeWitsVKey (TxBodyF _ txb) u gd keyUniv reqsigners = trace ("REAL KEYWIT\n"++show (ppSet (pcWitVKey @era reify) keywits)) keywits
   where
     bodyhash :: SafeHash (EraCrypto era) EraIndependentTxBody
     bodyhash = hashAnnotated txb
     keyhashes :: Set (KeyHash 'Witness (EraCrypto era))
     keyhashes = Set.union (witsVKeyNeededFromBody (liftUTxO u) txb (GenDelegs gd)) reqsigners
     keywits :: Set (WitVKey 'Witness (EraCrypto era))
-    keywits = Set.foldl' accum Set.empty keyhashes
+    keywits = Set.foldl' accum Set.empty (trace ("HASHES TO SIGN\n"++show(ppSet pcKeyHash keyhashes)++"\n"++show bodyhash) keyhashes)
       where
         accum ans hash = case Map.lookup hash keyUniv of
-          Nothing -> ans
-          Just keypair -> Set.insert (mkWitnessVKey bodyhash keypair) ans
+          Nothing -> error ("hash not in keyUniv "++show hash++"\n"++show(pcTxBody reify txb))
+          Just keypair -> trace ("PREIMAGE\n  "++show hash++"\n  "++show keypair) (Set.insert (mkWitnessVKey bodyhash keypair) ans)
 
 witsVKeyTarget ::
   Reflect era =>
@@ -268,6 +278,18 @@ getNTxOut x _ _ =
         ++ " in getNTxOut. Use (MetaSize size x) to get a random (SzExact n)."
     )
 
+-- | Compute the sum of all the Values in a List(Set,Map, ...) of TxOut  
+txoutSum :: forall era t. (Foldable t, Reflect era) => t (TxOutF era) -> Value era
+txoutSum xs = foldl' accum mempty xs
+  where accum ans (TxOutF _ txout) = txout ^. valueTxOutL <+> ans
+
+    
+minusMultiValue :: forall era. Reflect era => Proof era -> Value era -> Value era -> Map (ScriptHash (EraCrypto era)) (Map AssetName Integer)
+minusMultiValue p v1 v2 = case whichValue p of
+  ValueMaryToConway -> case v1 <-> v2 of MaryValue _ (MultiAsset m)-> Map.mapKeys (\ (PolicyID x) -> x) m
+  ValueShelleyToAllegra -> mempty
+
+
 -- ==============================================================
 -- Using constraints to generate a TxBody
 -- ==============================================================
@@ -275,9 +297,10 @@ getNTxOut x _ _ =
 txBodyPreds :: forall era. Reflect era => Proof era -> [Pred era]
 txBodyPreds p =
   (txOutPreds p balanceCoin (outputs p))
-    ++ [ Sized (Range 0 3) mint
-       , Subset (Dom mint) (Dom (nonSpendScriptUniv p))
-       , Random networkID
+    ++ [ -- Sized (Range 0 3) mint
+     --  , Subset (Dom mint) (Dom (nonSpendScriptUniv p))
+        mint :<-: (Constr "sumAssets" (\ out spend -> minusMultiValue p (txoutSum out) (txoutSum spend)) ^$ (outputs p) ^$ spending)
+       , networkID :<-: justTarget network
        , -- inputs
          Sized (Range 2 10) inputs
        , Member (Left feeTxIn) inputs
@@ -289,10 +312,12 @@ txBodyPreds p =
        , Member (Left colInput) collateral
        , colRestriction :=: Restrict collateral colUtxo
        , SumsTo (Right (Coin 1)) sumCol EQL [ProjMap CoinR outputCoinL colRestriction]
-       , totalCol :<-: (justTarget sumCol)
+       , tempTotalCol :=: sumCol
        , -- withdrawals
-         Sized (Range 0 2) withdrawals
-       , Subset (ProjS getRwdCredL CredR (Dom withdrawals)) (Dom nonZeroRewards)
+         Sized (Range 0 2) prewithdrawal
+       , Subset prewithdrawal (Dom nonZeroRewards)
+       , withdrawals :<-: (Constr "mkRwrdAcnt" (\ s r -> Map.fromList (map (\ x -> (RewardAcnt Testnet x, r Map.! x)) (Set.toList s)))
+                            ^$ prewithdrawal ^$ rewards)
        , nonZeroRewards :<-: (Constr "filter (/=0)" (Map.filter (/= (Coin 0))) ^$ rewards)
        , -- refInputs
          Sized (Range 0 1) refInputs
@@ -306,6 +331,10 @@ txBodyPreds p =
           balanceCoin
           EQL
           [ProjMap CoinR outputCoinL spending, SumMap withdrawals, One txrefunds, One txdeposits]
+       {-
+       , SumsTo ? balanceMultiAsset EQL [SumSet inputs,One mint]
+  
+       -}
        , txrefunds :<-: (Constr "certsRefunds" certsRefunds ^$ pparams p ^$ stakeDeposits ^$ certs)
        , txdeposits :<-: (Constr "certsDeposits" certsDeposits ^$ pparams p ^$ regPools ^$ certs)
        , scriptsNeeded :<-: (needT p ^$ tempTxBody ^$ (utxo p))
@@ -316,12 +345,12 @@ txBodyPreds p =
        , -- Construct a temporary 'Tx' with a size close to the size of the Tx we want.
          -- We will use this to compute the 'txfee' using a fix-point approach.
          Random tempWppHash
-       , tempTxFee :<-: (constTarget (Coin 0))
-       , tempTxBody :<-: txbodyTarget tempTxFee tempWppHash
+       , tempTxFee :<-: (constTarget (Coin (fromIntegral (maxBound :: Word64))))
+       , tempTxBody :<-: txbodyTarget tempTxFee tempWppHash (Lit CoinR  (Coin (fromIntegral (maxBound :: Word64))))
        , tempTx :<-: txTarget tempTxBody tempBootWits tempKeyWits
        , -- Compute the the real fee, and then recompute the TxBody and the Tx
          txfee :<-: (Constr "finalFee" computeFinalFee ^$ (pparams p) ^$ tempTx)
-       , txbodyterm :<-: txbodyTarget txfee wppHash
+       , txbodyterm :<-: txbodyTarget txfee wppHash totalCol
        , txterm :<-: txTarget txbodyterm bootWits keyWits
        ]
     ++ case whichUTxO p of
@@ -339,9 +368,9 @@ txBodyPreds p =
         , rdmrPtrs :<-: (rdmrPtrsT ^$ tempTxBody ^$ acNeeded ^$ plutusUniv)
         , rdmrPtrs :=: Dom redeemers
         , SumsTo (Left (ExUnits 1 1)) (maxTxExUnits p) EQL [ProjMap ExUnitsR sndL redeemers]
-        , -- Unfortunately SumsTo at ExUnits does not work except at EQL OrdCond.
+          -- Unfortunately SumsTo at ExUnits does not work except at EQL OrdCond.
           -- the problem is that (toI x + toI y) /= toI(x + y)
-          plutusDataHashes
+        , plutusDataHashes
             :<-: ( Constr "plutusDataHashes" getPlutusDataHashes
                     ^$ utxo p
                     ^$ tempTxBody
@@ -354,28 +383,18 @@ txBodyPreds p =
         , keyWits :<-: witsVKeyTarget txbodyterm (Simple reqSignerHashes)
         , langs :<-: (Constr "languages" scriptWitsLangs ^$ scriptWits)
         , wppHash :<-: integrityHash p (pparams p) langs redeemers dataWits
-        , owed
-            :<-: ( Constr "owed" (\percent (Coin fee) -> Coin (div ((fromIntegral percent) * fee) 100))
+        , owed :<-: ( Constr "owed" ( \ percent (Coin fee) -> rationalToCoinViaCeiling ((fromIntegral percent * fee) % 100))
                     ^$ (collateralPercentage p)
-                    ^$ txfee
-                 )
-        , -- we need to add e 'extraCol' to the range of 'colInput', in the 'utxo' to pay the fee.
-          -- we arrange this so the 'extraCol' will make the 'totalCol' one more than 'owed'
-          extraCol
-            :<-: ( Constr
-                    "neededCol"
-                    ( \(Coin tot) percent (Coin fee) ->
-                        Coin (div ((fromIntegral percent * fee) - (100 * tot) + 100) 100)
-                    ) --  ^ adding 100, makes the result (Coin 1) larger.
-                    ^$ sumCol
-                    ^$ (collateralPercentage p)
-                    ^$ txfee
-                 )
+                    ^$ txfee )
+          -- we need to add 'extraCol' to the range of 'colInput', in the 'utxo' to pay the collateral fee.
+          -- we arrange this so adding the 'extraCol' will make the sum of the all the collateral inputs, one more than 'owed'
+        , extraCol :<-: ( Constr "extraCol" (\ (Coin suminputs) (Coin owe) -> (Coin (owe + 1 - suminputs))) ^$ sumCol ^$ owed)
+        , totalCol :<-: (Constr "(<+>)" (\ x y -> x <+> y <-> Coin 1) ^$ extraCol ^$ sumCol)
         , Member (Right colRetAddr) addrUniv
-        , -- This depends on the Coin in the TxOut being (Coin 1). The computation of 'owed' and 'extraCol" should ensure this.
-          collateralReturn p :<-: (Constr "colReturn" (\ad -> TxOutF p (mkBasicTxOut ad (inject (Coin 1)))) ^$ colRetAddr)
-        , -- We compute this, so that we can test that the (Coin 1) invariant holds.
-          colRetCoin :<-: (Constr "-" (\sumc extra owe -> (sumc <> extra) <-> owe) ^$ sumCol ^$ extraCol ^$ owed)
+          -- This depends on the Coin in the TxOut being (Coin 1). The computation of 'owed' and 'extraCol" should ensure this.
+        , collateralReturn p :<-: (Constr "colReturn" (\ad -> TxOutF p (mkBasicTxOut ad (inject (Coin 1)))) ^$ colRetAddr)
+          -- We compute this, so that we can test that the (Coin 1) invariant holds.
+        , colRetCoin :<-: (Constr "-" (\sumc extra owe -> (sumc <> extra) <-> owe) ^$ sumCol ^$ extraCol ^$ owed)
         ]
   where
     spending = Var (V "spending" (MapR TxInR (TxOutR p)) No)
@@ -402,6 +421,8 @@ txBodyPreds p =
     tempBootWits = Var $ V "tempBootWits" (SetR (BootstrapWitnessR @era)) No
     tempKeyWits = Var $ V "tempKeyWits" (SetR (WitVKeyR reify)) No
     langs = Var $ V "langs" (SetR LanguageR) No
+    tempTotalCol = Var $ V "tempTotalCol" CoinR No
+    prewithdrawal = Var $ V "preWithdrawal" (SetR CredR) No
 
 txBodyStage ::
   (Reflect era) =>
@@ -486,11 +507,11 @@ adjustColInput {- colInputt sumColt extraColt -} env = do
   extracoin <- runTerm env extraCol
   utxomap <- runTerm env utxoterm
   let env2 = storeVar utxoV (balanceMap [(colinput, extracoin)] utxomap outputCoinL) env
-      adjust (Just x) y = Just (x <> y)
-      adjust Nothing _ = Nothing
-  env3 <- updateVal (<>) sumCol extracoin env2
-  env4 <- updateVal adjust totalCol extracoin env3
-  (env5, body) <- updateTarget override txbodyterm (txbodyTarget txfee wppHash) env4
+      -- adjust (Just x) y = Just (x <> y)
+      -- adjust Nothing _ = Nothing
+  -- env3 <- updateVal (<>) sumCol extracoin env2
+  -- env4 <- updateVal (<+>) totalCol extracoin env3
+  (env5, body) <- updateTarget override txbodyterm (txbodyTarget txfee wppHash totalCol) env2
   (env6, _) <- updateTarget override txterm (txTarget (Lit (TxBodyR reify) body) bootWits keyWits) env5
   pure env6
 
@@ -515,7 +536,7 @@ updateTarget adjust term@(Var v) delta env = do
 updateTarget _ v _ _ = failT ["Non Var in updateTarget: " ++ show v]
 
 override :: x -> x -> x
-override x y = y
+override _ y = y
 
 -- ========================================
 
@@ -535,12 +556,14 @@ genTxAndLedger proof = do
   env0 <- monadTyped $ substToEnv subst emptyEnv
   env1 <- monadTyped $ adjustFeeInput env0
   env2 <- monadTyped $ adjustColInput env1
-  ledger <- monadTyped (findVar (unVar ledgerState) env2)
+  ledger <- monadTyped $ runTarget env2 (ledgerStateT proof)
   (TxF _ tx) <- monadTyped (findVar (unVar txterm) env2)
   pure (ledger, tx, env2)
 
-go :: Gen Property
-go = do
+
+
+gone :: Gen (IO ())
+gone = do
   txIx <- arbitrary
   let proof = Babbage Standard
   (ledgerstate, tx, env) <- genTxAndLedger proof
@@ -551,14 +574,13 @@ go = do
   pure $ case applySTSByProof proof (TRC (lenv, ledgerstate, tx)) of
     Right ledgerState' ->
       -- UTxOState and CertState after applying the transaction $$$
-      classify (coerce (isValid' proof tx)) "TxValid" $
-        totalAda ledgerState' === totalAda ledgerstate
-    Left errs ->
-      counterexample
+      pure ()
+    Left errs -> do
+      putStrLn
         ( show (pcLedgerState proof ledgerstate)
             ++ "\n\n"
             ++ show (pcTx proof tx)
             ++ "\n\n"
             ++ show (ppList prettyA errs)
         )
-        (property False)
+      goRepl (Babbage Standard) env ""

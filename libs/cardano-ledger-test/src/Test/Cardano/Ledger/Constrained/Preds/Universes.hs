@@ -9,6 +9,7 @@
 module Test.Cardano.Ledger.Constrained.Preds.Universes
 where
 
+import Cardano.Ledger.Address (Addr (..), BootstrapAddress (..), bootstrapKeyHash)
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Classes hiding (genTxOut)
 import Test.Cardano.Ledger.Constrained.Env
@@ -17,11 +18,10 @@ import Test.Cardano.Ledger.Constrained.Rewrite (standardOrderInfo)
 import Test.Cardano.Ledger.Constrained.Solver
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars
+import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import Test.Cardano.Ledger.Generic.Proof
-import Test.Tasty.QuickCheck
-
-import Cardano.Ledger.Address (Addr (..), BootstrapAddress (..), bootstrapKeyHash)
 import Test.Cardano.Ledger.Shelley.Utils (epochFromSlotNo)
+import Test.Tasty.QuickCheck
 
 import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
 import qualified Cardano.Ledger.Alonzo.Scripts as Scripts (Tag (..))
@@ -52,7 +52,7 @@ import Cardano.Ledger.Credential (Credential (..), Ptr (..), StakeReference (..)
 import Cardano.Ledger.Crypto (Crypto, DSIGN)
 import Cardano.Ledger.Era (Era (EraCrypto))
 import Cardano.Ledger.Hashes (DataHash, EraIndependentTxBody, ScriptHash)
-import Cardano.Ledger.Keys (Hash, KeyHash, KeyRole (..), coerceKeyRole)
+import Cardano.Ledger.Keys (Hash, KeyHash, KeyRole (..), coerceKeyRole, hashKey)
 import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness, makeBootstrapWitness)
 import Cardano.Ledger.Mary.Value (
   AssetName (..),
@@ -72,7 +72,6 @@ import Data.String (IsString (..))
 import Test.Cardano.Ledger.Constrained.Combinators (genFromMap, itemFromSet, setSized)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
 import Test.Cardano.Ledger.Constrained.Scripts (allPlutusScripts, genCoreScript, spendPlutusScripts)
-import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 
 -- ============================================================
 -- Coins
@@ -123,7 +122,7 @@ genAddrPair netwrk = do
 genByronUniv :: Crypto c => Network -> Gen (Map (KeyHash 'Payment c) (Addr c, Byron.SigningKey))
 genByronUniv netwrk = do
   list <- vectorOf 50 (genAddrPair netwrk)
-  pure (Map.fromList (List.map (\(addr, signkey) -> (bootstrapKeyHash addr, (AddrBootstrap addr, signkey))) list))
+  pure $ Map.fromList (List.map (\(addr, signkey) -> (bootstrapKeyHash addr, (AddrBootstrap addr, signkey))) list)
 
 -- | Given a list of Byron addresses, compute BootStrap witnesses of all of those addresses
 --   Can only be used with StandardCrypto
@@ -285,18 +284,24 @@ genDataWits _p size = do
   scs <- vectorOf size arbitrary
   pure $ Map.fromList $ map (\x -> (hashData x, x)) scs
 
+--  This universe must not use Byron Addresses in Babbage and Conway, as Byron Addresses
+--  do not play well with plutusScripts in those eras.
 genAddrWith ::
+  Proof era ->
   Network ->
-  Set (Credential 'Payment c) ->
+  Set (Credential 'Payment (EraCrypto era)) ->
   Set Ptr ->
-  Set (Credential 'Staking c) ->
-  Map (KeyHash 'Payment c) (Addr c, Byron.SigningKey) -> -- The Byron Addresss Universe
-  Gen (Addr c)
-genAddrWith net ps ptrss cs byronMap =
-  frequency
-    [ (8, Addr net <$> pick1 ["from genPayCred ScriptHashObj"] ps <*> genStakeRefWith ptrss cs)
-    , (2, fst . snd <$> genFromMap ["from byronAddrUniv"] byronMap) -- This generates a known Byron Address
-    ]
+  Set (Credential 'Staking (EraCrypto era)) ->
+  Map (KeyHash 'Payment (EraCrypto era)) (Addr (EraCrypto era), Byron.SigningKey) -> -- The Byron Addresss Universe
+  Gen (Addr (EraCrypto era))
+genAddrWith proof net ps ptrss cs byronMap =
+  case whichTxOut proof of
+    TxOutBabbageToConway -> Addr net <$> pick1 ["from genPayCred ScriptHashObj"] ps <*> genStakeRefWith ptrss cs
+    _ ->
+      frequency
+        [ (8, Addr net <$> pick1 ["from genPayCred ScriptHashObj"] ps <*> genStakeRefWith ptrss cs)
+        , (2, fst . snd <$> genFromMap ["from byronAddrUniv"] byronMap) -- This generates a known Byron Address
+        ]
 
 genPtr :: SlotNo -> Gen Ptr
 genPtr (SlotNo n) =
@@ -354,15 +359,16 @@ ptrUnivT :: Term era SlotNo -> Target era (Gen (Set Ptr))
 ptrUnivT x = Constr "" (setSized ["From init ptruniv"] 30) :$ (Constr "" genPtr ^$ x)
 
 addrUnivT ::
+  Proof era ->
   Term era Network ->
-  Term era (Set (Credential 'Payment c)) ->
+  Term era (Set (Credential 'Payment (EraCrypto era))) ->
   Term era (Set Ptr) ->
-  Term era (Set (Credential 'Staking c)) ->
-  Term era (Map (KeyHash 'Payment c) (Addr c, Byron.SigningKey)) ->
-  Target era (Gen (Set (Addr c)))
-addrUnivT net ps pts cs byronAddrUnivT =
+  Term era (Set (Credential 'Staking (EraCrypto era))) ->
+  Term era (Map (KeyHash 'Payment (EraCrypto era)) (Addr (EraCrypto era), Byron.SigningKey)) ->
+  Target era (Gen (Set (Addr (EraCrypto era))))
+addrUnivT p net ps pts cs byronAddrUnivT =
   Constr "" (setSized ["From addrUnivT"] 40)
-    :$ (Constr "genAddrWith" genAddrWith ^$ net ^$ ps ^$ pts ^$ cs ^$ byronAddrUnivT)
+    :$ (Constr "genAddrWith" (genAddrWith p) ^$ net ^$ ps ^$ pts ^$ cs ^$ byronAddrUnivT)
 
 makeHashScriptMapT ::
   Proof era ->
@@ -389,8 +395,10 @@ universePreds p =
   , Sized (ExactSize 30) poolHashUniv
   , Sized (ExactSize 10) genesisHashUniv
   , Sized (ExactSize 10) voteHashUniv
-  , Sized (ExactSize 30) keymapUniv
-  , Sized (ExactSize 40) txinUniv
+  , Sized (ExactSize 40) keypairs
+  , keymapUniv :<-: (Constr "xx" (\s -> Map.fromList (map (\x -> (hashKey (vKey x), x)) s)) ^$ keypairs)
+  , -- , Sized (ExactSize 30) keymapUniv
+    Sized (ExactSize 40) txinUniv
   , Member (Right feeTxIn) txinUniv
   , validityInterval :<-: makeValidityT beginSlotDelta currentSlot endSlotDelta
   , Choose
@@ -416,10 +424,11 @@ universePreds p =
   , currentEpoch :<-: (Constr "epochFromSlotNo" epochFromSlotNo ^$ currentSlot)
   , GenFrom dataUniv (Constr "dataWits" (genDataWits p) ^$ (Lit IntR 30))
   , GenFrom datumsUniv (Constr "genDatums" (genDatums 30) ^$ dataUniv)
-  , GenFrom network (constTarget arbitrary) -- Choose Testnet or Mainnet
+  , --  , GenFrom network (constTarget arbitrary) -- Choose Testnet or Mainnet
+    network :<-: constTarget Testnet -- This is set by testGlobals which contains 'Testnet'
   , GenFrom ptrUniv (ptrUnivT currentSlot)
   , GenFrom byronAddrUniv (Constr "byronUniv" genByronUniv ^$ network)
-  , GenFrom addrUniv (addrUnivT network spendCredsUniv ptrUniv credsUniv byronAddrUniv)
+  , GenFrom addrUniv (addrUnivT p network spendCredsUniv ptrUniv credsUniv byronAddrUniv)
   , GenFrom multiAssetUniv (Constr "multiAsset" (vectorOf 50 . multiAsset) ^$ (nonSpendScriptUniv p))
   , GenFrom
       preTxoutUniv
@@ -468,6 +477,7 @@ universePreds p =
     keyhash = Var (V "keyhash" WitHashR No)
     scripthash = Var (V "scripthash" ScriptHashR No)
     preTxoutUniv = Var (V "preTxoutUniv" (ListR (TxOutR p)) No)
+    keypairs = Var (V "keypairs" (ListR KeyPairR) No)
 
 stakeToVote :: Credential 'Staking c -> Credential 'Voting c
 stakeToVote = coerceKeyRole

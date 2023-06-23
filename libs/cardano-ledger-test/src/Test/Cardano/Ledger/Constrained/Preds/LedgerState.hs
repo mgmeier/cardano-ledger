@@ -41,7 +41,8 @@ ledgerStatePreds p =
   , Subset (Rng preUtxo) (txoutUniv p)
   , utxo p :<-: (Constr "mapunion" Map.union ^$ preUtxo ^$ colUtxo)
   , --
-    Subset (Dom colUtxo) txinUniv
+    Disjoint (Dom colUtxo) (Dom preUtxo)
+  , Subset (Dom colUtxo) txinUniv
   , Subset (Rng colUtxo) (colTxoutUniv p)
   , NotMember feeTxIn (Dom colUtxo)
   , NotMember feeTxOut (Rng colUtxo)
