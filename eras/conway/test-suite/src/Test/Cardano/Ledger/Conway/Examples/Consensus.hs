@@ -201,4 +201,5 @@ exampleConwayGenesis :: ConwayGenesis c
 exampleConwayGenesis =
   ConwayGenesis
     { cgGenDelegs = GenDelegs Map.empty
+    , cgUpgradePParams = def
     }

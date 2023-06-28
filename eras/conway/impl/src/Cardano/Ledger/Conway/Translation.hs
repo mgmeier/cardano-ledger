@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -99,17 +100,17 @@ instance Crypto c => TranslateEra (ConwayEra c) Tx where
 --------------------------------------------------------------------------------
 
 instance Crypto c => TranslateEra (ConwayEra c) PParams where
-  translateEra _ = pure . upgradePParams def -- TODO: Pick UpgradeConwayPParams from ConwayGenesis instead
+  translateEra ConwayGenesis {cgUpgradePParams} = pure . upgradePParams cgUpgradePParams
 
 instance Crypto c => TranslateEra (ConwayEra c) EpochState where
-  translateEra ctxt es =
+  translateEra ctxt@ConwayGenesis {cgUpgradePParams} es =
     pure
       EpochState
         { esAccountState = esAccountState es
         , esSnapshots = esSnapshots es
         , esLState = translateEra' ctxt $ esLState es
-        , esPrevPp = upgradePParams def $ esPrevPp es -- TODO: Pick UpgradeConwayPParams from ConwayGenesis instead
-        , esPp = upgradePParams def $ esPp es -- TODO: Pick UpgradeConwayPParams from ConwayGenesis instead
+        , esPrevPp = upgradePParams cgUpgradePParams $ esPrevPp es
+        , esPp = upgradePParams cgUpgradePParams $ esPp es
         , esNonMyopic = esNonMyopic es
         }
 
@@ -160,7 +161,7 @@ instance Crypto c => TranslateEra (ConwayEra c) API.UTxO where
 
 instance Crypto c => TranslateEra (ConwayEra c) API.ProposedPPUpdates where
   translateEra _ctxt (API.ProposedPPUpdates ppup) =
-    pure $ API.ProposedPPUpdates $ fmap (upgradePParamsUpdate def) ppup -- TODO: Pick UpgradeConwayPParams from ConwayGenesis instead
+    pure $ API.ProposedPPUpdates $ fmap (upgradePParamsUpdate def) ppup
 
 translateTxOut ::
   Crypto c =>

@@ -199,6 +199,29 @@ instance Default (UpgradeConwayPParams StrictMaybe) where
       , ucppDRepActivity = SNothing
       }
 
+instance EncCBOR (UpgradeConwayPParams Identity) where
+  encCBOR UpgradeConwayPParams {..} =
+    encodeListLen 7
+      <> encCBOR ucppVotingThresholds
+      <> encCBOR ucppMinCCSize
+      <> encCBOR ucppCCTermLimit
+      <> encCBOR ucppGovExpiration
+      <> encCBOR ucppGovDeposit
+      <> encCBOR ucppDRepDeposit
+      <> encCBOR ucppDRepActivity
+
+instance DecCBOR (UpgradeConwayPParams Identity) where
+  decCBOR =
+    decodeRecordNamed "UpgradeConwayPParams" (const 7) $ do
+      ucppVotingThresholds <- decCBOR
+      ucppMinCCSize <- decCBOR
+      ucppCCTermLimit <- decCBOR
+      ucppGovExpiration <- decCBOR
+      ucppGovDeposit <- decCBOR
+      ucppDRepDeposit <- decCBOR
+      ucppDRepActivity <- decCBOR
+      pure $ UpgradeConwayPParams {..}
+
 instance Crypto c => EraPParams (ConwayEra c) where
   type PParamsHKD f (ConwayEra c) = ConwayPParams f (ConwayEra c)
   type UpgradePParams f (ConwayEra c) = UpgradeConwayPParams f
@@ -554,6 +577,37 @@ conwayUpgradePParamsHKDPairs px pp =
   , ("dRepDeposit", hkdMap px (toJSON @Coin) (pp ^. hkdDRepDepositL @era @f))
   , ("dRepActivity", hkdMap px (toJSON @EpochNo) (pp ^. hkdDRepActivityL @era @f))
   ]
+
+instance ToJSON (UpgradeConwayPParams Identity) where
+  toJSON = object . upgradeConwayPParamsUpdatePairs
+  toEncoding = pairs . mconcat . upgradeConwayPParamsUpdatePairs
+
+upgradeConwayPParamsUpdatePairs :: KeyValue a => UpgradeConwayPParams Identity -> [a]
+upgradeConwayPParamsUpdatePairs upp =
+  uncurry (.=) <$> upgradeConwayPParamsHKDPairs upp
+
+upgradeConwayPParamsHKDPairs :: UpgradeConwayPParams Identity -> [(Key, Aeson.Value)]
+upgradeConwayPParamsHKDPairs UpgradeConwayPParams {..} =
+  [ ("votingThresholds", (toJSON @(Map.Map Natural Natural)) ucppVotingThresholds)
+  , ("minCCSize", (toJSON @Natural) ucppMinCCSize)
+  , ("cCTermLimit", (toJSON @Natural) ucppCCTermLimit)
+  , ("govExpiration", (toJSON @Natural) ucppGovExpiration)
+  , ("govDeposit", (toJSON @Coin) ucppGovDeposit)
+  , ("dRepDeposit", (toJSON @Coin) ucppDRepDeposit)
+  , ("dRepActivity", (toJSON @EpochNo) ucppDRepActivity)
+  ]
+
+instance FromJSON (UpgradeConwayPParams Identity) where
+  parseJSON =
+    withObject "UpgradeConwayPParams" $ \o ->
+      UpgradeConwayPParams
+        <$> o .: "votingThresholds"
+        <*> o .: "minCCSize"
+        <*> o .: "cCTermLimit"
+        <*> o .: "govExpiration"
+        <*> o .: "govDeposit"
+        <*> o .: "dRepDeposit"
+        <*> o .: "dRepActivity"
 
 upgradeConwayPParams ::
   forall f c.
