@@ -5,8 +5,11 @@
 module Test.Cardano.Ledger.Constrained.Preds.CertState where
 
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
+import Cardano.Ledger.Era (EraCrypto)
+import Cardano.Ledger.Keys (GenDelegPair (..), GenDelegs (..), KeyHash, KeyRole (..), asWitness, coerceKeyRole)
 import Cardano.Ledger.Pretty (ppMap)
 import GHC.Real ((%))
+import Lens.Micro
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Lenses (fGenDelegGenKeyHashL)
@@ -151,7 +154,16 @@ dstatePreds _p =
   , Dom rewards :=: Dom stakeDeposits
   , Dom delegations :⊆: Dom rewards
   , Dom rewards :=: Rng ptrs
-  , Dom genDelegs :⊆: Dom genesisHashUniv
+  , Sized (ExactSize (fromIntegral (quorumConstant + 2))) (Dom genDelegs)
+  , --  , Dom genDelegs :⊆: Dom genesisHashUniv
+    -- , Component (Rng genDelegs) [Member gdkeyhash keymapUniv]
+    ForEach
+      (Range 5 5)
+      genDelegs
+      genDelegPat
+      [ Member (Right (fieldToTerm gdDomain)) (Dom genesisHashUniv)
+      , Member (Right (fieldToTerm gdKeyHash)) (Dom keymapUniv)
+      ]
   , Negate (deltaReserves) :=: deltaTreasury
   , SumsTo (Right (Coin 1)) instanReservesSum EQL [SumMap instanReserves]
   , SumsTo (Right (DeltaCoin 1)) (Delta instanReservesSum) LTH [One (Delta reserves), One deltaReserves]
@@ -204,3 +216,30 @@ mainC = do
   putStrLn (show (prettyC proof certState))
   putStrLn "\n"
   putStrLn (unlines (otherFromEnv [] env))
+
+-- =================================================
+-- Some Fields used to compute 'genDelegs'
+
+ll :: Lens' (KeyHash 'Genesis c, GenDelegPair c) (KeyHash 'Witness c)
+ll =
+  lens
+    (\(_, GenDelegPair x _) -> asWitness x)
+    (\(x, GenDelegPair _ z) y -> (x, GenDelegPair (coerceKeyRole y) z))
+
+gdKeyHash = Field "gdKeyHash" WitHashR (PairR GenHashR GenDelegPairR) ll
+
+gdDomain = Field "gdDomain" GenHashR (PairR GenHashR GenDelegPairR) (lens fst (\(_, y) x -> (x, y)))
+
+-- | Pat that encodes a pattern binding two variables in a Pair.
+--   In Haskell we would write (gdDomain,GenDelegPair gdKeyHash _)
+genDelegPat :: Pat era (KeyHash 'Genesis (EraCrypto era), GenDelegPair (EraCrypto era))
+genDelegPat = Pat (PairR GenHashR GenDelegPairR) [Arg gdDomain, Arg gdKeyHash]
+
+predX =
+  ForEach
+    (Range 6 8)
+    genDelegs
+    genDelegPat
+    [ Member (Right (fieldToTerm gdDomain)) (Dom genesisHashUniv)
+    , Member (Right (fieldToTerm gdKeyHash)) (Dom keymapUniv)
+    ]

@@ -1321,13 +1321,13 @@ pcData d@(Data (PV1.B bytes)) =
 
 instance Era era => PrettyC (Data era) era where prettyC _ = pcData
 
-pcTimelock :: forall era. Reflect era => PDoc -> Timelock era -> PDoc
-pcTimelock hash (RequireSignature akh) = ppSexp "Signature" [keyHashSummary akh, hash]
-pcTimelock hash (RequireAllOf _ts) = ppSexp "AllOf" [hash]
-pcTimelock hash (RequireAnyOf _) = ppSexp "AnyOf" [hash]
-pcTimelock hash (RequireMOf m _) = ppSexp "MOfN" [ppInteger (fromIntegral m), hash]
-pcTimelock hash (RequireTimeExpire mslot) = ppSexp "Expires" [ppSlotNo mslot, hash]
-pcTimelock hash (RequireTimeStart mslot) = ppSexp "Starts" [ppSlotNo mslot, hash]
+pcTimelock :: forall era. Reflect era => Timelock era -> PDoc
+pcTimelock (RequireSignature akh) = ppSexp "Sign" [pcKeyHash akh]
+pcTimelock (RequireAllOf ts) = ppSexp "AllOf" [ppList pcTimelock (toList ts)]
+pcTimelock (RequireAnyOf ts) = ppSexp "AnyOf" [ppList pcTimelock (toList ts)]
+pcTimelock (RequireMOf m ts) = ppSexp "MOfN" (ppInteger (fromIntegral m) : [ppList pcTimelock (toList ts)])
+pcTimelock (RequireTimeExpire mslot) = ppSexp "Expires" [ppSlotNo mslot]
+pcTimelock (RequireTimeStart mslot) = ppSexp "Starts" [ppSlotNo mslot]
 
 pcMultiSig :: Reflect era => PDoc -> SS.MultiSig era -> PDoc
 pcMultiSig h (SS.RequireSignature hk) = ppSexp "ReqSig" [keyHashSummary hk, h]
@@ -1347,17 +1347,17 @@ pcHashScript (Allegra _) s = ppString "Hash " <> pcScriptHash (hashScript @era s
 pcHashScript (Shelley _) s = ppString "Hash " <> pcScriptHash (hashScript @era s)
 
 pcScript :: forall era. Reflect era => Proof era -> Script era -> PDoc
-pcScript p@(Conway _) s@(TimelockScript t) = pcTimelock @era (pcHashScript @era p s) t
+pcScript (Conway _) (TimelockScript t) = pcTimelock @era t
 pcScript p@(Conway _) s@(PlutusScript v _) =
   parens (hsep [ppString ("PlutusScript " <> show v <> " "), pcHashScript p s])
-pcScript p@(Babbage _) s@(TimelockScript t) = pcTimelock @era (pcHashScript @era p s) t
+pcScript (Babbage _) (TimelockScript t) = pcTimelock @era t
 pcScript p@(Babbage _) s@(PlutusScript v _) =
   parens (hsep [ppString ("PlutusScript " <> show v <> " "), pcHashScript p s])
-pcScript p@(Alonzo _) s@(TimelockScript t) = pcTimelock @era (pcHashScript @era p s) t
+pcScript (Alonzo _) (TimelockScript t) = pcTimelock @era t
 pcScript p@(Alonzo _) s@(PlutusScript v _) =
   parens (hsep [ppString ("PlutusScript " <> show v <> " "), pcHashScript p s])
-pcScript p@(Mary _) s = pcTimelock @era (pcHashScript @era p s) s
-pcScript p@(Allegra _) s = pcTimelock @era (pcHashScript @era p s) s
+pcScript (Mary _) s = pcTimelock @era s
+pcScript (Allegra _) s = pcTimelock @era s
 pcScript p@(Shelley _) s = pcMultiSig @era (pcHashScript @era p s) s
 
 pcDataHash :: DataHash era -> PDoc
@@ -1419,7 +1419,7 @@ pcShelleyTxCert (ShelleyTxCertMir (MIRCert x (SendToOppositePotMIR c))) =
   ppRecord
     "MIROppositePot"
     [ ("pot", ppString (show x))
-    , ("Addresses", pcCoin c)
+    , ("Amount", pcCoin c)
     ]
 
 pcConwayTxCert :: ConwayTxCert c -> PDoc

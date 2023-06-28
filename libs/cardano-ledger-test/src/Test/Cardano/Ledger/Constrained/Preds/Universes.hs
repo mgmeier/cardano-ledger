@@ -23,8 +23,14 @@ import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Shelley.Utils (epochFromSlotNo)
 import Test.Tasty.QuickCheck
 
+import qualified Cardano.Chain.Common as Byron
+import qualified Cardano.Crypto.DSIGN as DSIGN
+import qualified Cardano.Crypto.Signing as Byron
 import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
 import qualified Cardano.Ledger.Alonzo.Scripts as Scripts (Tag (..))
+import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), dataToBinaryData, hashData)
+import Cardano.Ledger.Alonzo.TxOut (AlonzoTxOut (..))
+import Cardano.Ledger.Babbage.TxOut (BabbageTxOut (..))
 import Cardano.Ledger.BaseTypes (
   Network (..),
   SlotNo (..),
@@ -32,13 +38,7 @@ import Cardano.Ledger.BaseTypes (
   TxIx (..),
   mkCertIxPartial,
  )
-
-import qualified Cardano.Chain.Common as Byron
-import qualified Cardano.Crypto.DSIGN as DSIGN
-import qualified Cardano.Crypto.Signing as Byron
-import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..), dataToBinaryData, hashData)
-import Cardano.Ledger.Alonzo.TxOut (AlonzoTxOut (..))
-import Cardano.Ledger.Babbage.TxOut (BabbageTxOut (..))
+import qualified Cardano.Ledger.BaseTypes as Utils (Globals (..))
 import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Core (
   EraScript,
@@ -72,6 +72,7 @@ import Data.String (IsString (..))
 import Test.Cardano.Ledger.Constrained.Combinators (genFromMap, itemFromSet, setSized)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
 import Test.Cardano.Ledger.Constrained.Scripts (allPlutusScripts, genCoreScript, spendPlutusScripts)
+import qualified Test.Cardano.Ledger.Shelley.Utils as Utils
 
 -- ============================================================
 -- Coins
@@ -384,6 +385,9 @@ makeHashScriptMapT p size tag m vi =
     ^$ m
     ^$ vi
 
+cast :: forall c k. Set (KeyHash 'Witness c) -> Set (KeyHash k c)
+cast x = Set.map (\kh -> coerceKeyRole @KeyHash @'Witness kh) x
+
 -- =================================================================
 -- Using constraints to generate the Universes
 
@@ -392,13 +396,22 @@ universePreds p =
   [ Sized (Range 100 500) currentSlot
   , Sized (Range 0 30) beginSlotDelta
   , Sized (Range 5 35) endSlotDelta
-  , Sized (ExactSize 30) poolHashUniv
-  , Sized (ExactSize 10) genesisHashUniv
-  , Sized (ExactSize 10) voteHashUniv
-  , Sized (ExactSize 40) keypairs
+  , Sized (ExactSize 50) keypairs
   , keymapUniv :<-: (Constr "xx" (\s -> Map.fromList (map (\x -> (hashKey (vKey x), x)) s)) ^$ keypairs)
-  , -- , Sized (ExactSize 30) keymapUniv
-    Sized (ExactSize 40) txinUniv
+  , Sized (ExactSize 20) prePoolUniv
+  , Subset prePoolUniv (Dom keymapUniv)
+  , poolHashUniv :<-: (Constr "WitnessToStakePool" cast ^$ prePoolUniv)
+  , Sized (ExactSize 10) preStakeUniv
+  , Subset preStakeUniv (Dom keymapUniv)
+  , stakeHashUniv :<-: (Constr "WitnessToStaking" cast ^$ preStakeUniv)
+  , Sized (ExactSize 20) preGenesisUniv
+  , Subset preGenesisUniv (Dom keymapUniv)
+  , preGenesisDom :<-: (Constr "WitnessToGenesis" cast ^$ preGenesisUniv)
+  , preGenesisDom :=: (Dom genesisHashUniv)
+  , Sized (ExactSize 20) preVoteUniv
+  , Subset preVoteUniv (Dom keymapUniv)
+  , voteHashUniv :<-: (Constr "WitnessToStakePool" cast ^$ preVoteUniv)
+  , Sized (ExactSize 40) txinUniv
   , Member (Right feeTxIn) txinUniv
   , validityInterval :<-: makeValidityT beginSlotDelta currentSlot endSlotDelta
   , Choose
@@ -424,8 +437,8 @@ universePreds p =
   , currentEpoch :<-: (Constr "epochFromSlotNo" epochFromSlotNo ^$ currentSlot)
   , GenFrom dataUniv (Constr "dataWits" (genDataWits p) ^$ (Lit IntR 30))
   , GenFrom datumsUniv (Constr "genDatums" (genDatums 30) ^$ dataUniv)
-  , --  , GenFrom network (constTarget arbitrary) -- Choose Testnet or Mainnet
-    network :<-: constTarget Testnet -- This is set by testGlobals which contains 'Testnet'
+  , -- 'network' is set by testGlobals which contains 'Testnet'
+    network :<-: constTarget (Utils.networkId Utils.testGlobals)
   , GenFrom ptrUniv (ptrUnivT currentSlot)
   , GenFrom byronAddrUniv (Constr "byronUniv" genByronUniv ^$ network)
   , GenFrom addrUniv (addrUnivT p network spendCredsUniv ptrUniv credsUniv byronAddrUniv)
@@ -478,6 +491,11 @@ universePreds p =
     scripthash = Var (V "scripthash" ScriptHashR No)
     preTxoutUniv = Var (V "preTxoutUniv" (ListR (TxOutR p)) No)
     keypairs = Var (V "keypairs" (ListR KeyPairR) No)
+    prePoolUniv = Var (V "prePoolUniv" (SetR WitHashR) No)
+    preStakeUniv = Var (V "preStakeUniv" (SetR WitHashR) No)
+    preGenesisUniv = Var (V "preGenesisUniv" (SetR WitHashR) No)
+    preGenesisDom = Var (V "preGenesisDom" (SetR GenHashR) No)
+    preVoteUniv = Var (V "prePoolUniv" (SetR WitHashR) No)
 
 stakeToVote :: Credential 'Staking c -> Credential 'Voting c
 stakeToVote = coerceKeyRole

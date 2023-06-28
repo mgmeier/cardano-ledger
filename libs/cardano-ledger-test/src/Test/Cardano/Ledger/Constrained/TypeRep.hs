@@ -265,6 +265,7 @@ data Rep era t where
   CommHotHashR :: Rep era (KeyHash 'CommitteeHotKey (EraCrypto era))
   LanguageR :: Rep era Language
   LedgerStateR :: Proof era -> Rep era (LedgerState era)
+  StakeHashR :: Rep era (KeyHash 'Staking (EraCrypto era))
 
 stringR :: Rep era String
 stringR = ListR CharR
@@ -387,6 +388,7 @@ instance Singleton (Rep e) where
   testEql LanguageR LanguageR = Just Refl
   testEql (LedgerStateR c) (LedgerStateR d) =
     do Refl <- testEql c d; pure Refl
+  testEql StakeHashR StakeHashR = Just Refl
   testEql _ _ = Nothing
 
   cmpIndex x y = compare (shape x) (shape y)
@@ -478,6 +480,7 @@ instance Show (Rep era t) where
   show CommHotHashR = "CommHotHash"
   show LanguageR = "Language"
   show (LedgerStateR p) = "(LedgerState " ++ short p ++ ")"
+  show StakeHashR = "(KeyHash 'Staking c)"
 
 synopsis :: forall e t. Rep e t -> t -> String
 synopsis RationalR r = show r
@@ -574,6 +577,7 @@ synopsis CommColdHashR x = show x
 synopsis CommHotHashR x = show x
 synopsis LanguageR x = show x
 synopsis (LedgerStateR p) x = show ((unReflect pcLedgerState p x) :: PDoc)
+synopsis StakeHashR k = "(KeyHash 'Staking " ++ show (keyHashSummary k) ++ ")"
 
 synSum :: Rep era a -> a -> String
 synSum (MapR _ CoinR) m = ", sum = " ++ show (pcCoin (Map.foldl' (<>) mempty m))
@@ -687,6 +691,7 @@ instance Shaped (Rep era) any where
   shape CommHotHashR = Nullary 80
   shape LanguageR = Nullary 81
   shape (LedgerStateR p) = Nary 82 [shape p]
+  shape StakeHashR = Nullary 83
 
 compareRep :: forall era t s. Rep era t -> Rep era s -> Ordering
 compareRep x y = cmpIndex @(Rep era) x y
@@ -826,6 +831,7 @@ genSizedRep _ (LedgerStateR p) = case p of
   Alonzo _ -> arbitrary
   Babbage _ -> arbitrary
   Conway _ -> arbitrary
+genSizedRep _ StakeHashR = arbitrary
 
 genRep ::
   Era era =>
@@ -958,6 +964,7 @@ shrinkRep CommColdHashR x = shrink x
 shrinkRep CommHotHashR x = shrink x
 shrinkRep LanguageR x = shrink x
 shrinkRep (LedgerStateR _) _ = []
+shrinkRep StakeHashR x = shrink x
 
 -- ===========================
 
@@ -1072,6 +1079,7 @@ hasOrd rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)
     help CommHotHashR x = pure $ With x
     help LanguageR x = pure $ With x
     help (LedgerStateR _) _ = failT ["LedgerState does not have Ord instance"]
+    help StakeHashR p = pure $ With p
 
 hasEq :: Rep era t -> s t -> Typed (HasConstraint Eq (s t))
 hasEq rep xx = explain ("'hasOrd " ++ show rep ++ "' fails") (help rep xx)

@@ -34,7 +34,7 @@ import Test.Cardano.Ledger.Constrained.Classes (
 import Test.Cardano.Ledger.Constrained.Combinators (errorMess, genFromMap, itemFromSet, suchThatErr)
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Monad
-import Test.Cardano.Ledger.Constrained.Rewrite (DependGraph (..), OrderInfo, compileGen)
+import Test.Cardano.Ledger.Constrained.Rewrite (DependGraph (..), OrderInfo, compileGen, cpeq)
 import Test.Cardano.Ledger.Constrained.Size (
   AddsSpec (..),
   OrdCond (..),
@@ -849,6 +849,7 @@ dispatch v1@(V nam r1 _) preds = explain ("Solving for variable " ++ nam ++ show
                 ++ show r1
                 ++ " for conditions "
                 ++ show cs
+                ++ show (List.nubBy cpeq cs)
             ]
 
 genOrFail ::

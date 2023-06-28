@@ -55,11 +55,13 @@ module Test.Cardano.Ledger.Generic.Proof (
   TxCertWit (..),
   PParamsWit (..),
   UTxOWit (..),
+  ScriptWit (..),
   whichValue,
   whichTxOut,
   whichTxCert,
   whichPParams,
   whichUTxO,
+  whichScript,
 ) where
 
 import Cardano.Crypto.DSIGN as DSIGN
@@ -68,6 +70,7 @@ import Cardano.Crypto.KES.Class (ContextKES)
 import qualified Cardano.Crypto.KES.Class as KES (Signable)
 import Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.Allegra (AllegraEra)
+import Cardano.Ledger.Allegra.Scripts (Timelock)
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.Alonzo.Core (AlonzoEraPParams, AlonzoEraTxBody)
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..))
@@ -86,6 +89,7 @@ import Cardano.Ledger.Core (
   Era (EraCrypto),
   EraPParams,
   EraRule,
+  EraScript,
   EraTx,
   EraTxAuxData,
   EraTxOut,
@@ -101,6 +105,7 @@ import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Mary.Value (MaryValue)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Ledger.Shelley.Core (EraGovernance, EraIndependentTxBody, ShelleyEraTxBody, ShelleyEraTxCert)
+import Cardano.Ledger.Shelley.Scripts (MultiSig)
 import Cardano.Ledger.Shelley.TxCert (ShelleyTxCert)
 import Cardano.Ledger.Shelley.TxOut (ShelleyTxOut (..))
 import Cardano.Ledger.Shelley.TxWits (ShelleyTxWits (..))
@@ -485,3 +490,16 @@ whichUTxO (Mary _) = UTxOShelleyToMary
 whichUTxO (Alonzo _) = UTxOAlonzoToConway
 whichUTxO (Babbage _) = UTxOAlonzoToConway
 whichUTxO (Conway _) = UTxOAlonzoToConway
+
+data ScriptWit era where
+  ScriptShelleyToShelley :: (Script era ~ MultiSig era, EraScript era) => ScriptWit era
+  ScriptAllegraToMary :: (Script era ~ Timelock era, EraScript era) => ScriptWit era
+  ScriptAlonzoToConway :: (Script era ~ AlonzoScript era, EraScript era) => ScriptWit era
+
+whichScript :: Proof era -> ScriptWit era
+whichScript (Shelley _) = ScriptShelleyToShelley
+whichScript (Allegra _) = ScriptAllegraToMary
+whichScript (Mary _) = ScriptAllegraToMary
+whichScript (Alonzo _) = ScriptAlonzoToConway
+whichScript (Babbage _) = ScriptAlonzoToConway
+whichScript (Conway _) = ScriptAlonzoToConway

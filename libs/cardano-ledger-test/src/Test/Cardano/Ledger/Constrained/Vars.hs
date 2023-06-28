@@ -11,37 +11,33 @@ module Test.Cardano.Ledger.Constrained.Vars where
 import Cardano.Ledger.Address (Addr (..), RewardAcnt (..), Withdrawals (..))
 import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
 import Cardano.Ledger.Alonzo.Core (AlonzoEraPParams (..), ppCollateralPercentageL, ppMaxTxExUnitsL, ppPricesL)
+import Cardano.Ledger.Alonzo.Scripts (ExUnits (..), Prices (..), Tag (..))
+import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..))
+import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptIntegrity (..), ScriptIntegrityHash, ScriptPurpose (..))
+import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..), Redeemers (..), TxDats (..))
 import Cardano.Ledger.BaseTypes (BlocksMade (..), EpochNo, Network (..), ProtVer (..), SlotNo (..))
 import Cardano.Ledger.CertState (CertState (..), DState (..), FutureGenDeleg (..), PState (..), VState (..))
 import qualified Cardano.Ledger.CertState as DPS (InstantaneousRewards (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin)
-import Cardano.Ledger.Core (
-  EraPParams,
-  EraTxOut (mkBasicTxOut),
-  PParams,
-  TxAuxData,
-  TxBody,
-  TxOut,
-  TxWits,
-  Value,
-  addrTxOutL,
-  coinTxOutL,
-  ppKeyDepositL,
-  ppMaxBBSizeL,
-  ppMaxBHSizeL,
-  ppMaxTxSizeL,
-  ppMinFeeAL,
-  ppMinFeeBL,
-  ppPoolDepositL,
-  ppProtocolVersionL,
-  valueTxOutL,
- )
+import Cardano.Ledger.Conway.Governance (ConwayTallyState (..))
+import Cardano.Ledger.Core (EraPParams, EraTxOut (mkBasicTxOut), PParams, PParamsHKD, TxAuxData, TxBody, TxOut, TxWits, Value, addrTxOutL, coinTxOutL, ppKeyDepositL, ppMaxBBSizeL, ppMaxBHSizeL, ppMaxTxSizeL, ppMinFeeAL, ppMinFeeBL, ppPoolDepositL, ppProtocolVersionL, valueTxOutL)
 import Cardano.Ledger.Credential (Credential, Ptr)
+import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.EpochBoundary (SnapShot (..), SnapShots (..), Stake (..))
 import Cardano.Ledger.Era (Era (EraCrypto))
+import Cardano.Ledger.Hashes (DataHash, EraIndependentScriptIntegrity, ScriptHash (..))
 import Cardano.Ledger.Keys (GenDelegPair, GenDelegs (..), KeyHash, KeyRole (..))
+import Cardano.Ledger.Mary.Value (
+  AssetName (..),
+  MaryValue (..),
+  MultiAsset (..),
+  PolicyID (..),
+  multiAssetFromList,
+ )
 import Cardano.Ledger.PoolDistr (IndividualPoolStake (..), PoolDistr (..))
 import Cardano.Ledger.PoolParams (PoolParams)
+import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
+import qualified Cardano.Ledger.Shelley.Governance as Core (GovernanceState (..))
 import Cardano.Ledger.Shelley.LedgerState (
   AccountState (..),
   EpochState (..),
@@ -51,45 +47,28 @@ import Cardano.Ledger.Shelley.LedgerState (
   UTxOState (..),
   smartUTxOState,
  )
-import Cardano.Ledger.Shelley.TxCert (TxCert)
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
-
-import Cardano.Ledger.Alonzo.Scripts (ExUnits (..), Prices (..), Tag (..))
-import Cardano.Ledger.Alonzo.Scripts.Data (Data (..), Datum (..))
-import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptIntegrity (..), ScriptIntegrityHash, ScriptPurpose (..))
-import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..), Redeemers (..), TxDats (..))
-import Cardano.Ledger.Conway.Governance (ConwayTallyState (..))
-import Cardano.Ledger.Core (PParamsHKD)
-import Cardano.Ledger.Crypto (Crypto)
-import Cardano.Ledger.Hashes (DataHash, EraIndependentScriptIntegrity, ScriptHash (..))
-import Cardano.Ledger.Mary.Value (
-  AssetName (..),
-  MaryValue (..),
-  MultiAsset (..),
-  PolicyID (..),
-  multiAssetFromList,
- )
-import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
-import qualified Cardano.Ledger.Shelley.Governance as Core (GovernanceState (..))
 import Cardano.Ledger.Shelley.PParams (ProposedPPUpdates (..))
 import qualified Cardano.Ledger.Shelley.PParams as Core (ProposedPPUpdates (..))
 import Cardano.Ledger.Shelley.PoolRank (NonMyopic (..))
 import Cardano.Ledger.Shelley.RewardUpdate (PulsingRewUpdate (Complete))
 import qualified Cardano.Ledger.Shelley.RewardUpdate as RU
 import Cardano.Ledger.Shelley.Rewards (Reward (..))
+import Cardano.Ledger.Shelley.TxCert (TxCert)
 import Cardano.Ledger.TxIn (TxIn)
 import Cardano.Ledger.UMap (compactCoinOrError, fromCompact)
 import Cardano.Ledger.UTxO (UTxO (..))
 import Cardano.Ledger.Val (Val (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.VMap as VMap
+import Data.Word (Word64)
 import Lens.Micro
 import Numeric.Natural (Natural)
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
-import Test.Cardano.Ledger.Constrained.Ast (Target (..), Term (Var), constTarget, fieldToTerm, ppTarget, (^$))
+import Test.Cardano.Ledger.Constrained.Ast (Target (..), Term (Lit, Var), constTarget, fieldToTerm, ppTarget, (^$))
 import Test.Cardano.Ledger.Constrained.Classes (
   GovernanceState (..),
   PParamsF (..),
@@ -115,6 +94,7 @@ import Test.Cardano.Ledger.Constrained.Classes (
  )
 import Test.Cardano.Ledger.Constrained.Env (Access (..), AnyF (..), Field (..), Name (..), V (..))
 import Test.Cardano.Ledger.Constrained.Lenses
+import Test.Cardano.Ledger.Constrained.Size (Size (..))
 import Test.Cardano.Ledger.Constrained.TypeRep (Rep (..), testEql, (:~:) (Refl))
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import Test.Cardano.Ledger.Generic.Fields (TxBodyField (..), TxField (..), WitnessesField (..))
@@ -125,10 +105,12 @@ import Test.Cardano.Ledger.Generic.Updaters (Policy, merge, newTx, newTxBody, ne
 import Cardano.Crypto.Signing (SigningKey (..))
 import Cardano.Ledger.Alonzo.UTxO (AlonzoScriptsNeeded (..))
 import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..))
+import qualified Cardano.Ledger.BaseTypes as Utils (Globals (..))
 import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness)
 import Cardano.Ledger.Keys.WitVKey (WitVKey (..))
 import Cardano.Ledger.SafeHash (SafeHash)
 import Cardano.Ledger.Shelley.UTxO (EraUTxO (..), ShelleyScriptsNeeded (..))
+import qualified Test.Cardano.Ledger.Shelley.Utils as Utils
 
 -- ================================================================
 
@@ -635,6 +617,10 @@ dataUniv = Var (V "dataUniv" (MapR DataHashR DataR) No)
 poolHashUniv :: Term era (Set (KeyHash 'StakePool (EraCrypto era)))
 poolHashUniv = Var $ V "poolHashUniv" (SetR PoolHashR) No
 
+-- | The universe of StakePool key hashes. These hashes hash are hashes of the Owners of a PoolParam
+stakeHashUniv :: Term era (Set (KeyHash 'Staking (EraCrypto era)))
+stakeHashUniv = Var $ V "stakeHashUniv" (SetR StakeHashR) No
+
 -- | The universe of the Genesis key hashes and their signing and validating GenDelegPairs
 genesisHashUniv :: Term era (Map (KeyHash 'Genesis (EraCrypto era)) (GenDelegPair (EraCrypto era)))
 genesisHashUniv = Var $ V "genesisHashUniv" (MapR GenHashR GenDelegPairR) No
@@ -699,8 +685,19 @@ beginSlotDelta = Var (V "beginSlotDelta" SlotNoR No)
 
 -- See also currentEpoch in NewEpochState fields
 
+-- | From Globals
 network :: Term era Network
 network = Var (V "network" NetworkR No)
+
+-- | This not really a variable, But a constant that is set by the 'testGlobals'
+--   we reflect this into a Term, so we can refer to it in the Preds.
+quorumConstant :: Word64
+quorumConstant = Utils.quorum Utils.testGlobals
+
+-- | From Globals. Reflected here as a Literal Constant Term, at type Int,
+--   because is is used to compare the Size of things, which are computed as Int
+quorum :: Term era Int
+quorum = Lit IntR (fromIntegral quorumConstant)
 
 addrUniv :: Term era (Set (Addr (EraCrypto era)))
 addrUniv = Var $ V "addrUniv" (SetR AddrR) No

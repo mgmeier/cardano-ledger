@@ -5,8 +5,10 @@
 
 module Test.Cardano.Ledger.Constrained.Scripts where
 
-import Cardano.Ledger.Allegra.Scripts (Timelock (..), ValidityInterval (..))
+import Cardano.Ledger.Allegra.Scripts (ValidityInterval (..))
+import qualified Cardano.Ledger.Allegra.Scripts as Time (Timelock (..))
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..), Tag (..))
+import Cardano.Ledger.Alonzo.Tx (IsValid (..))
 import Cardano.Ledger.Core (Era (..), Script, hashScript)
 import Cardano.Ledger.Hashes (ScriptHash)
 import Cardano.Ledger.Keys (
@@ -18,14 +20,14 @@ import Cardano.Ledger.Keys (
 import qualified Cardano.Ledger.Shelley.Scripts as Shelley (MultiSig (..))
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (replicateM)
+import Data.Foldable (toList)
+import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-
--- import qualified Data.Set as Set
-
-import Cardano.Ledger.Alonzo.Tx (IsValid (..))
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Sequence.Strict as Seq
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Numeric.Natural
 import Test.Cardano.Ledger.Constrained.Combinators (genFromMap)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
@@ -70,7 +72,7 @@ genMultiSig keymap _proof = do
         Shelley.RequireMOf m <$> replicateM n (genNestedMultiSig (k - 1))
   genNestedMultiSig (2 :: Natural)
 
-genTimelock :: forall era. Era era => KeyMap era -> ValidityInterval -> Proof era -> Gen (Timelock era)
+genTimelock :: forall era. Era era => KeyMap era -> ValidityInterval -> Proof era -> Gen (Time.Timelock era)
 genTimelock keymap (ValidityInterval mBefore mAfter) _proof = do
   -- We need to limit how deep these timelocks can go, otherwise this generator will
   -- diverge. It also has to stay very shallow because it grows too fast.
@@ -79,7 +81,7 @@ genTimelock keymap (ValidityInterval mBefore mAfter) _proof = do
             oneof $
               nonRecTimelocks ++ [requireAllOf k, requireAnyOf k, requireMOf k]
         | otherwise = oneof nonRecTimelocks
-      nonRecTimelocks :: [Gen (Timelock era)]
+      nonRecTimelocks :: [Gen (Time.Timelock era)]
       nonRecTimelocks =
         [ r
         | SJust r <-
@@ -88,23 +90,23 @@ genTimelock keymap (ValidityInterval mBefore mAfter) _proof = do
             , SJust requireSignature
             ]
         ]
-      requireSignature = RequireSignature . fst <$> genFromMap ["from requiresSignature in genTimelock"] keymap
+      requireSignature = Time.RequireSignature . fst <$> genFromMap ["from requiresSignature in genTimelock"] keymap
       requireAllOf k = do
         n <- nonNegativeSingleDigitInt
-        RequireAllOf . Seq.fromList <$> replicateM n (genNestedTimelock (k - 1))
+        Time.RequireAllOf . Seq.fromList <$> replicateM n (genNestedTimelock (k - 1))
       requireAnyOf k = do
         n <- positiveSingleDigitInt
-        RequireAnyOf . Seq.fromList <$> replicateM n (genNestedTimelock (k - 1))
+        Time.RequireAnyOf . Seq.fromList <$> replicateM n (genNestedTimelock (k - 1))
       requireMOf k = do
         n <- nonNegativeSingleDigitInt
         m <- choose (0, n)
-        RequireMOf m . Seq.fromList <$> replicateM n (genNestedTimelock (k - 1))
+        Time.RequireMOf m . Seq.fromList <$> replicateM n (genNestedTimelock (k - 1))
       requireTimeStart (SlotNo validFrom) = do
         minSlotNo <- choose (minBound, validFrom)
-        pure $ RequireTimeStart (SlotNo minSlotNo)
+        pure $ Time.RequireTimeStart (SlotNo minSlotNo)
       requireTimeExpire (SlotNo validTill) = do
         maxSlotNo <- choose (validTill, maxBound)
-        pure $ RequireTimeExpire (SlotNo maxSlotNo)
+        pure $ Time.RequireTimeExpire (SlotNo maxSlotNo)
   genNestedTimelock (2 :: Natural)
 
 genPlutusScript ::
@@ -221,3 +223,45 @@ keymapUniv = Var (V "keymapUniv" (MapR WitHashR KeyPairR) No)
 -- spendMapUniv = Var (V "spendMapUniv"
 
 -}
+
+-- The function 'witsVKeyNeededFromBody' computes the necesary (but not sufficient)
+-- key witnesses. Some of the missing ones have to do with MultiSig (and Timelock) scripts
+-- So we need to compute the smallest set possible for Scripts. A MultiSig (Timelock) scripts
+-- needs enough key witnesses, so that some subset of the Signature scripts to make it True.
+
+sufficientMultiSig :: Era era => Shelley.MultiSig era -> Set (KeyHash 'Witness (EraCrypto era))
+sufficientMultiSig x = case x of
+  Shelley.RequireSignature kh -> Set.singleton kh
+  Shelley.RequireAllOf xs -> Set.unions (map sufficientMultiSig xs)
+  Shelley.RequireAnyOf xs -> smallest (map sufficientMultiSig xs)
+  Shelley.RequireMOf n xs -> Set.unions (take n (List.sortBy p (map sufficientMultiSig xs)))
+    where
+      p a b = compare (Set.size a) (Set.size b)
+
+smallest :: [Set x] -> Set x
+smallest xs = help Set.empty xs
+  where
+    help small1 [] = small1
+    help small1 (y : ys) =
+      if Set.size small1 < Set.size y
+        then help small1 ys
+        else help y ys
+
+sufficientTimelock :: Era era => Time.Timelock era -> Set (KeyHash 'Witness (EraCrypto era))
+sufficientTimelock x = case x of
+  Time.RequireSignature kh -> Set.singleton kh
+  Time.RequireAllOf xs -> Set.unions (fmap sufficientTimelock xs)
+  Time.RequireAnyOf xs -> smallest (map sufficientTimelock (toList xs))
+  Time.RequireMOf n xs -> Set.unions (take n (List.sortBy p (map sufficientTimelock (toList xs))))
+    where
+      p a b = compare (Set.size a) (Set.size b)
+  Time.RequireTimeExpire {} -> Set.empty
+  Time.RequireTimeStart {} -> Set.empty
+
+sufficientScript :: Proof era -> Script era -> Set (KeyHash 'Witness (EraCrypto era))
+sufficientScript p s = case whichScript p of
+  ScriptShelleyToShelley -> sufficientMultiSig s
+  ScriptAllegraToMary -> sufficientTimelock s
+  ScriptAlonzoToConway -> case s of
+    TimelockScript tl -> sufficientTimelock tl
+    PlutusScript _ _ -> Set.empty

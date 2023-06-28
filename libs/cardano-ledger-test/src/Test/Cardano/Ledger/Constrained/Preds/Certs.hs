@@ -28,6 +28,7 @@ import Cardano.Ledger.Shelley.TxCert (
   ShelleyTxCert (..),
  )
 import Data.Map (Map)
+import Lens.Micro (lens)
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Classes
 import Test.Cardano.Ledger.Constrained.Env
@@ -46,6 +47,7 @@ import Test.QuickCheck
 
 import Cardano.Crypto.Hash.Class (Hash)
 import Cardano.Crypto.VRF.Class (VerKeyVRF)
+import Cardano.Ledger.Address (RewardAcnt (..))
 import Cardano.Ledger.Crypto (HASH, VRF)
 
 -- =============================================
@@ -161,12 +163,24 @@ certsPreds p = case whichTxCert p of
           ( sRetirePool ^$ poolHash ^$ epoch
           , [Member (Left poolHash) (Dom regPools), epoch :<-: (Constr "+" (+) ^$ currentEpoch ^$ epochDelta)]
           )
-        , (sRegPool ^$ poolParams, [Random poolParams])
+        ,
+          ( sRegPool ^$ poolParams
+          ,
+            [ -- Pick a random PoolParams, except constrain the poolId and the poolRewAcnt, by the additional Preds
+              Component
+                (Right poolParams)
+                [field PoolParamsR poolId, field PoolParamsR poolRewAcnt, field PoolParamsR poolOwners]
+            , Member (Left poolId) poolHashUniv
+            , poolRewAcnt :<-: (Constr "mkRewAcnt" RewardAcnt ^$ network ^$ rewCred)
+            , Member (Right rewCred) credsUniv
+            , Subset poolOwners stakeHashUniv
+            ]
+          )
         ,
           ( sMirDistribute ^$ pot ^$ mirdistr
           , [Random pot, Sized (Range 1 6) (Dom mirdistr), Random mirdistr] -- TODO Sum of the Distr must have some bounds
           )
-        , (sMirShift ^$ pot ^$ mircoin, [Random pot, Random mircoin])
+        , (sMirShift ^$ pot ^$ mircoin, [Random pot, mircoin :<-: (Constr "shift" shift ^$ pot ^$ reserves ^$ treasury)])
         ]
     ]
   TxCertConwayToConway ->
@@ -211,7 +225,19 @@ certsPreds p = case whichTxCert p of
             , kd :=: (keyDepAmt p)
             ]
           )
-        , (cRegPool ^$ poolParams, [Random poolParams])
+        ,
+          ( cRegPool ^$ poolParams
+          ,
+            [ -- Pick a random PoolParams, except constrain the poolId and the poolRewAcnt, by the additional Preds
+              Component
+                (Right poolParams)
+                [field PoolParamsR poolId, field PoolParamsR poolRewAcnt, field PoolParamsR poolOwners]
+            , Member (Left poolId) poolHashUniv
+            , poolRewAcnt :<-: (Constr "mkRewAcnt" RewardAcnt ^$ network ^$ rewCred)
+            , Member (Right rewCred) credsUniv
+            , Subset poolOwners stakeHashUniv
+            ]
+          )
         ,
           ( cRetirePool ^$ poolHash ^$ epoch
           , [Member (Left poolHash) (Dom regPools), epoch :<-: (Constr "+" (+) ^$ currentEpoch ^$ epochDelta)]
@@ -233,6 +259,12 @@ certsPreds p = case whichTxCert p of
     kd = var "kd" CoinR
     vote = var "vote" VCredR
     epochDelta = var "epochDelta" EpochR
+    -- poolId and poolRewAcnt are used as 'Fields' in the 'Component' Pred, they need 'Yes' Access
+    -- Component [f1,f1] , means a random value except fo constraining the fields given.
+    poolId = Var (V "poolId" PoolHashR (Yes PoolParamsR (lens ppId (\x i -> x {ppId = i}))))
+    poolOwners = Var (V "poolOwners" (SetR StakeHashR) (Yes PoolParamsR (lens ppOwners (\x i -> x {ppOwners = i}))))
+    poolRewAcnt = Var (V "poolRewAcnt" RewardAcntR (Yes PoolParamsR (lens ppRewardAcnt (\x r -> x {ppRewardAcnt = r}))))
+    rewCred = Var (V "rewCred" CredR No)
 
 certsStage ::
   Reflect era =>
@@ -264,3 +296,7 @@ main = do
   putStrLn (show (ppList (\(TxCertF _ x) -> pcTxCert proof x) certsv))
   _ <- goRepl proof env ""
   pure ()
+
+shift :: MIRPot -> Coin -> Coin -> Coin
+shift ReservesMIR res _treas = res
+shift TreasuryMIR _res treas = treas

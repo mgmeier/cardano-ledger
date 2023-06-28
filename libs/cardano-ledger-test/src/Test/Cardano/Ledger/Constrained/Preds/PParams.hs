@@ -10,10 +10,18 @@ module Test.Cardano.Ledger.Constrained.Preds.PParams (
 
 import Cardano.Ledger.Alonzo.Scripts (ExUnits (..))
 import qualified Cardano.Ledger.Alonzo.Scripts as Script (Prices (..))
+import Cardano.Ledger.BaseTypes (
+  NonNegativeInterval,
+  boundRational,
+ )
 import Cardano.Ledger.Coin (Coin (..))
+import GHC.Num (Natural)
+import Lens.Micro ((^.))
 import Test.Cardano.Ledger.Constrained.Ast
+import Test.Cardano.Ledger.Constrained.Env (Access (..), V (..))
 import Test.Cardano.Ledger.Constrained.Rewrite (standardOrderInfo)
 import Test.Cardano.Ledger.Constrained.Size (OrdCond (..))
+import Test.Cardano.Ledger.Constrained.Solver
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars
 import Test.Cardano.Ledger.Generic.Fields
@@ -21,15 +29,6 @@ import Test.Cardano.Ledger.Generic.Functions (protocolVersion)
 import Test.Cardano.Ledger.Generic.Proof
 import Test.Cardano.Ledger.Generic.Updaters (defaultCostModels, newPParams)
 import Test.Tasty.QuickCheck
-
-import Cardano.Ledger.BaseTypes (
-  NonNegativeInterval,
-  boundRational,
- )
-import GHC.Num (Natural)
-import Lens.Micro ((^.))
-import Test.Cardano.Ledger.Constrained.Env (Access (..), V (..))
-import Test.Cardano.Ledger.Constrained.Solver
 
 extract :: Term era t -> Term era s -> Pred era
 extract term@(Var (V _ _ (Yes r1 lens))) record =

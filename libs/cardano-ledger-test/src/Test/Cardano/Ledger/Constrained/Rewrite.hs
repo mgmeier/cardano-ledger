@@ -117,6 +117,8 @@ cpeq (SumsTo (Right i) x c xs) (SumsTo (Right j) y d ys) = cEq x y i j && typedE
 cpeq (SumsTo (Left i) x c xs) (SumsTo (Left j) y d ys) = cEq x y i j && typedEq x y && listEq cseq xs ys && c == d
 cpeq (Component (Left x) xs) (Component (Left y) ys) = typedEq x y && listEq anyWeq xs ys
 cpeq (Component (Right x) xs) (Component (Right y) ys) = typedEq x y && listEq anyWeq xs ys
+cpeq (Member (Right x) xs) (Member (Right y) ys) = typedEq x y && typedEq xs ys
+cpeq (Member (Left x) xs) (Member (Left y) ys) = typedEq x y && typedEq xs ys
 cpeq _ _ = False
 
 -- | Conservative Sum equality
