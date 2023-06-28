@@ -60,8 +60,6 @@ import Cardano.Ledger.Binary.Coders (
   (<!),
  )
 import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.Conway.Era (ConwayEra)
-import Cardano.Ledger.Conway.PParams ()
 import Cardano.Ledger.Core
 import Cardano.Ledger.Credential (Credential)
 import Cardano.Ledger.Crypto (Crypto)
@@ -445,7 +443,10 @@ deriving instance Eq (PParams era) => Eq (EnactState era)
 
 deriving instance Show (PParams era) => Show (EnactState era)
 
-instance EraPParams era => Default (EnactState era) where
+instance
+  (EraPParams era, Default (SafeHash (EraCrypto era) ByteString)) =>
+  Default (EnactState era)
+  where
   def =
     EnactState
       def
@@ -493,7 +494,9 @@ data RatifyState era = RatifyState
   }
   deriving (Generic, Eq, Show)
 
-instance EraPParams era => Default (RatifyState era)
+instance
+  (Default (SafeHash (EraCrypto era) ByteString), EraPParams era) =>
+  Default (RatifyState era)
 
 instance EraPParams era => DecCBOR (RatifyState era) where
   decCBOR =
@@ -568,7 +571,9 @@ instance EraPParams era => ToCBOR (ConwayGovernance era) where
 instance EraPParams era => FromCBOR (ConwayGovernance era) where
   fromCBOR = fromEraCBOR @era
 
-instance EraPParams era => Default (ConwayGovernance era)
+instance
+  (Default (SafeHash (EraCrypto era) ByteString), EraPParams era) =>
+  Default (ConwayGovernance era)
 
 instance EraPParams era => NFData (ConwayGovernance era)
 
@@ -585,6 +590,3 @@ toConwayGovernancePairs cg@(ConwayGovernance _ _ _) =
       , "ratify" .= cgRatify
       , "voterRoles" .= cgVoterRoles
       ]
-
-instance Crypto c => EraGovernance (ConwayEra c) where
-  type GovernanceState (ConwayEra c) = ConwayGovernance (ConwayEra c)

@@ -2,7 +2,7 @@
 
 ## 1.4.0.1
 
-*
+* Add `PParams` for `Conway` #3498
 
 ## 1.4.0.0
 
