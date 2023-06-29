@@ -21,10 +21,6 @@ module Cardano.Ledger.Conway.Governance (
   EnactState (..),
   RatifyState (..),
   ConwayGovernance (..),
-  -- Lenses
-  cgTallyL,
-  cgRatifyL,
-  cgVoterRolesL,
   GovernanceAction (..),
   GovernanceActionState (..),
   GovernanceActionIx (..),
@@ -37,6 +33,11 @@ module Cardano.Ledger.Conway.Governance (
   GovernanceProcedure (..),
   Anchor (..),
   AnchorDataHash,
+  -- Lenses
+  cgTallyL,
+  cgRatifyL,
+  cgVoterRolesL,
+  cgPropDepositsL,
 ) where
 
 import Cardano.Crypto.Hash.Class (hashToTextAsHex)
@@ -537,6 +538,7 @@ data ConwayGovernance era = ConwayGovernance
   { cgTally :: !(ConwayTallyState era)
   , cgRatify :: !(RatifyState era)
   , cgVoterRoles :: !(Map (Credential 'Voting (EraCrypto era)) VoterRole)
+  , cgPropDeposits :: !(Map (GovernanceActionId (EraCrypto era)) Coin)
   }
   deriving (Generic, Eq, Show)
 
@@ -549,10 +551,14 @@ cgRatifyL = lens cgRatify (\x y -> x {cgRatify = y})
 cgVoterRolesL :: Lens' (ConwayGovernance era) (Map (Credential 'Voting (EraCrypto era)) VoterRole)
 cgVoterRolesL = lens cgVoterRoles (\x y -> x {cgVoterRoles = y})
 
+cgPropDepositsL :: Lens' (ConwayGovernance era) (Map (GovernanceActionId (EraCrypto era)) Coin)
+cgPropDepositsL = lens cgPropDeposits (\x y -> x {cgPropDeposits = y})
+
 instance EraPParams era => DecCBOR (ConwayGovernance era) where
   decCBOR =
     decode $
       RecD ConwayGovernance
+        <! From
         <! From
         <! From
         <! From
@@ -582,11 +588,12 @@ instance EraPParams era => ToJSON (ConwayGovernance era) where
   toEncoding = pairs . mconcat . toConwayGovernancePairs
 
 toConwayGovernancePairs :: (KeyValue a, EraPParams era) => ConwayGovernance era -> [a]
-toConwayGovernancePairs cg@(ConwayGovernance _ _ _) =
+toConwayGovernancePairs cg@(ConwayGovernance _ _ _ _) =
   let ConwayGovernance {..} = cg
    in [ "tally" .= cgTally
       , "ratify" .= cgRatify
       , "voterRoles" .= cgVoterRoles
+      , "propDeposits" .= cgPropDeposits
       ]
 
 instance Crypto c => EraGovernance (ConwayEra c) where

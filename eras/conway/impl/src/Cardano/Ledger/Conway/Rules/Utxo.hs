@@ -1,28 +1,31 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeOperators #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Cardano.Ledger.Conway.Rules.Utxo (ConwayUTXO) where
 
-import Cardano.Ledger.Alonzo.Rules (AlonzoUtxoEvent (..), AlonzoUtxoPredFailure(..), AlonzoUtxosPredFailure)
-import Cardano.Ledger.Babbage.Rules (BabbageUtxoPredFailure
-  , babbageUtxoTransition, BabbageUtxoPredFailure(..))
+import Cardano.Ledger.Alonzo.Rules (AlonzoUtxoEvent (..), AlonzoUtxoPredFailure (..), AlonzoUtxosPredFailure)
+import Cardano.Ledger.Babbage.Rules (
+  BabbageUtxoPredFailure (..),
+  babbageUtxoTransition,
+ )
 import Cardano.Ledger.BaseTypes (ShelleyBase)
-import Cardano.Ledger.Conway.Core (EraRule, EraTx (..), BabbageEraTxBody, Era)
+import Cardano.Ledger.Conway.Core (BabbageEraTxBody, Era, EraRule, EraTx (..))
 import Cardano.Ledger.Conway.Era (ConwayUTXO, ConwayUTXOS)
 import Cardano.Ledger.Conway.Governance (EraGovernance)
 import Cardano.Ledger.Conway.Tx (AlonzoTx)
-import Cardano.Ledger.Shelley.API (UtxoEnv)
-import qualified Cardano.Ledger.Shelley.API as Shelley
-import Control.State.Transition.Extended (STS (..), Embed (..))
-import Cardano.Ledger.UTxO (EraUTxO)
 import Cardano.Ledger.Conway.TxWits (AlonzoEraTxWits)
 import Cardano.Ledger.Rules.ValidationMode (Inject)
+import Cardano.Ledger.Shelley.API (UtxoEnv)
+import qualified Cardano.Ledger.Shelley.API as Shelley
 import Cardano.Ledger.Shelley.LedgerState (PPUPPredFailure)
+import Cardano.Ledger.UTxO (EraUTxO)
+import Control.State.Transition.Extended (Embed (..), STS (..))
 
 instance
   ( EraGovernance era
@@ -62,6 +65,7 @@ instance
   , BaseM (ConwayUTXOS era) ~ ShelleyBase
   , PredicateFailure (ConwayUTXOS era) ~ AlonzoUtxosPredFailure era
   ) =>
-  Embed (ConwayUTXOS era) (ConwayUTXO era) where
+  Embed (ConwayUTXOS era) (ConwayUTXO era)
+  where
   wrapEvent = UtxosEvent
   wrapFailed = AlonzoInBabbageUtxoPredFailure . UtxosFailure

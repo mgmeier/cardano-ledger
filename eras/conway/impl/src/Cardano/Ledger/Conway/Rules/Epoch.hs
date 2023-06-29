@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -19,11 +20,17 @@ module Cardano.Ledger.Conway.Rules.Epoch (
 where
 
 import Cardano.Ledger.BaseTypes (ShelleyBase)
+import Cardano.Ledger.CertState (certDStateL, dsUnifiedL)
+import Cardano.Ledger.Compactible (Compactible (..))
 import Cardano.Ledger.Conway.Core
 import Cardano.Ledger.Conway.Era (ConwayEPOCH)
+import Cardano.Ledger.Conway.Governance (ConwayGovernance (..), GovernanceActionId, GovernanceActionState (..), RatifyState (..), cgPropDepositsL)
+import Cardano.Ledger.Credential (Credential (..))
 import Cardano.Ledger.EpochBoundary (SnapShots)
 import Cardano.Ledger.Shelley.LedgerState (
+  CertState (..),
   EpochState,
+  LedgerState (..),
   PState (..),
   UTxOState (..),
   asReserves,
@@ -34,9 +41,11 @@ import Cardano.Ledger.Shelley.LedgerState (
   esPrevPp,
   esSnapshots,
   lsCertState,
+  lsCertStateL,
   lsUTxOState,
+  lsUTxOStateL,
   obligationCertState,
-  pattern CertState,
+  utxosGovernanceL,
   pattern EpochState,
  )
 import Cardano.Ledger.Shelley.Rewards ()
@@ -53,6 +62,7 @@ import Cardano.Ledger.Shelley.Rules (
  )
 import qualified Cardano.Ledger.Shelley.Rules as Shelley
 import Cardano.Ledger.Slot (EpochNo)
+import Cardano.Ledger.UMap (UMap, UView (..), (∪+))
 import Control.SetAlgebra (eval, (⨃))
 import Control.State.Transition (
   Embed (..),
@@ -62,7 +72,12 @@ import Control.State.Transition (
   judgmentContext,
   trans,
  )
+import Data.Foldable (Foldable (..))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
+import Data.Sequence.Strict (StrictSeq)
+import qualified Data.Set as Set
+import Lens.Micro ((%~), (&))
 
 data ConwayEpochEvent era
   = PoolReapEvent (Event (EraRule "POOLREAP" era))
@@ -81,6 +96,7 @@ instance
   , Signal (EraRule "POOLREAP" era) ~ EpochNo
   , Eq (UpecPredFailure era)
   , Show (UpecPredFailure era)
+  , GovernanceState era ~ ConwayGovernance era
   ) =>
   STS (ConwayEPOCH era)
   where
@@ -92,6 +108,37 @@ instance
   type Event (ConwayEPOCH era) = ConwayEpochEvent era
   transitionRules = [epochTransition]
 
+returnProposalDeposits' ::
+  ConwayGovernance era ->
+  StrictSeq (GovernanceActionId (EraCrypto era), GovernanceActionState era) ->
+  UMap (EraCrypto era) ->
+  UMap (EraCrypto era)
+returnProposalDeposits' ConwayGovernance {..} gaids m =
+  RewDepUView m ∪+ foldl' addRew mempty gaids
+  where
+    addRew m' (gaid, gas) =
+      Map.insertWith
+        (<>)
+        (KeyHashObj $ gasReturnAddr gas)
+        (fromMaybe mempty $ toCompact =<< Map.lookup gaid cgPropDeposits)
+        m'
+
+returnProposalDeposits ::
+  forall era.
+  GovernanceState era ~ ConwayGovernance era =>
+  LedgerState era ->
+  LedgerState era
+returnProposalDeposits ls@LedgerState {..} =
+  ls
+    & lsCertStateL . certDStateL %~ dstate
+    & lsUTxOStateL . utxosGovernanceL . cgPropDepositsL %~ removeDeps
+  where
+    govSt = utxosGovernance lsUTxOState
+    ratifyState = cgRatify govSt
+    removedProposals = rsRemoved ratifyState
+    dstate = dsUnifiedL %~ returnProposalDeposits' govSt removedProposals
+    removeDeps m = Map.withoutKeys m . Set.fromList . toList $ fst <$> removedProposals
+
 epochTransition ::
   forall era.
   ( Embed (EraRule "SNAP" era) (ConwayEPOCH era)
@@ -102,6 +149,7 @@ epochTransition ::
   , Environment (EraRule "POOLREAP" era) ~ PParams era
   , State (EraRule "POOLREAP" era) ~ ShelleyPoolreapState era
   , Signal (EraRule "POOLREAP" era) ~ EpochNo
+  , GovernanceState era ~ ConwayGovernance era
   ) =>
   TransitionRule (ConwayEPOCH era)
 epochTransition = do
@@ -134,18 +182,23 @@ epochTransition = do
     trans @(EraRule "POOLREAP" era) $
       TRC (pp, PoolreapState utxoSt acnt dstate pstate', e)
 
-  let adjustedDPstate = CertState vstate pstate'' dstate'
+  let adjustedCertState = CertState vstate pstate'' dstate'
+      adjustedLState =
+        ls
+          { lsUTxOState = utxoSt'
+          , lsCertState = adjustedCertState
+          }
       epochState' =
         EpochState
           acnt'
           ss'
-          (ls {lsUTxOState = utxoSt', lsCertState = adjustedDPstate})
+          (returnProposalDeposits adjustedLState)
           pr
           pp
           nm
 
   let
-    utxoSt''' = utxoSt' {utxosDeposited = obligationCertState adjustedDPstate}
+    utxoSt''' = utxoSt' {utxosDeposited = obligationCertState adjustedCertState}
     acnt'' = acnt' {asReserves = asReserves acnt'}
   pure $
     epochState'

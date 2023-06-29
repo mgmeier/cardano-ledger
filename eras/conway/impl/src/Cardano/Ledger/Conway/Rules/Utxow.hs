@@ -39,7 +39,7 @@ import Cardano.Ledger.Babbage.Rules (
 import Cardano.Ledger.Babbage.Tx (refScripts)
 import Cardano.Ledger.BaseTypes (ShelleyBase)
 import Cardano.Ledger.Conway.Core
-import Cardano.Ledger.Conway.Era (ConwayUTXOW, ConwayUTXO)
+import Cardano.Ledger.Conway.Era (ConwayUTXO, ConwayUTXOW)
 import Cardano.Ledger.Conway.Governance (VotingProcedure (..))
 import Cardano.Ledger.Credential (credKeyHashWitness)
 import Cardano.Ledger.Crypto (DSIGN, HASH)

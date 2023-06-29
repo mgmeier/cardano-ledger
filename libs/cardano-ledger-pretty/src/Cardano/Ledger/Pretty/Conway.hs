@@ -307,13 +307,14 @@ instance
   ) =>
   PrettyA (ConwayGovernance era)
   where
-  prettyA cg@(ConwayGovernance _ _ _) =
+  prettyA cg@(ConwayGovernance _ _ _ _) =
     let ConwayGovernance {..} = cg
      in ppRecord
           "ConwayGovernance"
           [ ("Tally", prettyA cgTally)
           , ("Ratify", prettyA cgRatify)
           , ("VoterRoles", prettyA cgVoterRoles)
+          , ("PropDeposits", prettyA cgPropDeposits)
           ]
 
 instance

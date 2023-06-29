@@ -78,6 +78,7 @@ instance
       <$> arbitrary
       <*> arbitrary
       <*> arbitrary
+      <*> arbitrary
 
 instance
   (Era era, Arbitrary (PParams era), Arbitrary (PParamsUpdate era)) =>
