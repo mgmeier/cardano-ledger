@@ -234,6 +234,9 @@ maybeTarget = Constr "maybeTarget" genMaybe
 listToSetTarget :: Ord x => Term era [x] -> Target era (Set.Set x)
 listToSetTarget x = Constr "FromList" Set.fromList ^$ x
 
+setToListTarget :: Term era (Set x) -> Target era [x]
+setToListTarget x = Constr "toList" Set.toList ^$ x
+
 -- ===================================
 
 showL :: (t -> String) -> [Char] -> [t] -> [Char]

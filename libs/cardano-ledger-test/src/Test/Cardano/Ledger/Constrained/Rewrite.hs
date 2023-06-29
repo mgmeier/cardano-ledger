@@ -37,9 +37,10 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Debug.Trace
 import Test.Cardano.Ledger.Constrained.Ast
+import Test.Cardano.Ledger.Constrained.Combinators (setSized)
 import Test.Cardano.Ledger.Constrained.Env (Access (..), AnyF (..), Env (..), Field (..), Name (..), V (..), sameName)
-import Test.Cardano.Ledger.Constrained.Monad (Typed (..), failT, monadTyped)
-import Test.Cardano.Ledger.Constrained.Size (genFromSize) -- ,OrdCond(..))
+import Test.Cardano.Ledger.Constrained.Monad (HasConstraint (With), Typed (..), failT, monadTyped)
+import Test.Cardano.Ledger.Constrained.Size (genFromSize)
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.QuickCheck
 
@@ -96,13 +97,43 @@ listEq _ [] [] = True
 listEq eqf (x : xs) (y : ys) = eqf x y && listEq eqf xs ys
 listEq _ _ _ = False
 
+-- | Conservative Sum equality
+csumeq :: Sum era t -> Sum era t -> Bool
+csumeq (One x) (One y) = cteq x y
+csumeq (SumMap x) (SumMap y) =
+  case testEql (termRep x) (termRep y) of
+    Just Refl -> cteq x y
+    Nothing -> False
+csumeq (SumList x) (SumList y) = cteq x y
+csumeq _ _ = False
+
+-- | Conservative (and unsound for Constr) Target equality
+ctareq :: Target era t -> Target era t -> Bool
+ctareq (Constr x _) (Constr y _) = x == y
+ctareq (Simple x) (Simple y) = cteq x y
+ctareq (x :$ (Simple xs)) (y :$ (Simple ys)) =
+  case testEql (termRep xs) (termRep ys) of
+    Just Refl -> ctareq x y && cteq xs ys
+    Nothing -> False
+ctareq _ _ = False
+
 -- | Conservative Term equality
 cteq :: Term era t -> Term era t -> Bool
+cteq (Lit t1 x) (Lit t2 y) = case testEql t1 t2 of
+  Just Refl ->
+    case hasEq t1 t1 of
+      Typed (Right (With _)) -> x == y
+      _ -> False
+  Nothing -> False
 cteq (Var x) (Var y) = Name x == Name y
 cteq (Dom x) (Dom y) = typedEq x y
 cteq (Rng x) (Rng y) = typedEq x y
+cteq (Elems x) (Elems y) = typedEq x y
 cteq (Delta x) (Delta y) = typedEq x y
 cteq (Negate x) (Negate y) = typedEq x y
+cteq (HashD x) (HashD y) = typedEq x y
+cteq (HashS x) (HashS y) = typedEq x y
+cteq (Pair x a) (Pair y b) = typedEq x y && typedEq a b
 cteq _ _ = False
 
 -- | Conservative Pred equality
@@ -119,7 +150,24 @@ cpeq (Component (Left x) xs) (Component (Left y) ys) = typedEq x y && listEq any
 cpeq (Component (Right x) xs) (Component (Right y) ys) = typedEq x y && listEq anyWeq xs ys
 cpeq (Member (Right x) xs) (Member (Right y) ys) = typedEq x y && typedEq xs ys
 cpeq (Member (Left x) xs) (Member (Left y) ys) = typedEq x y && typedEq xs ys
-cpeq _ _ = False
+cpeq (SubMap x xs) (SubMap y ys) = typedEq x y && typedEq xs ys
+cpeq (NotMember x xs) (NotMember y ys) = typedEq x y && typedEq xs ys
+cpeq (x :<-: xs) (y :<-: ys) = case testEql (termRep x) (termRep y) of
+  Just Refl -> typedEq x y && ctareq xs ys
+  Nothing -> False
+cpeq x y = sumsEq x y
+
+-- |  Conservative SumsTo equality
+sumsEq :: Pred era -> Pred era -> Bool
+sumsEq (SumsTo (Left s1) x1 c1 ss1) (SumsTo (Left s2) x2 c2 ss2) =
+  case testEql (termRep x1) (termRep x2) of
+    Just Refl -> s1 == s2 && typedEq x1 x2 && c1 == c2 && listEq csumeq ss1 ss2
+    Nothing -> False
+sumsEq (SumsTo (Right s1) x1 c1 ss1) (SumsTo (Right s2) x2 c2 ss2) =
+  case testEql (termRep x1) (termRep x2) of
+    Just Refl -> s1 == s2 && typedEq x1 x2 && c1 == c2 && listEq csumeq ss1 ss2
+    Nothing -> False
+sumsEq _ _ = False
 
 -- | Conservative Sum equality
 cseq :: Sum era c -> Sum era d -> Bool
@@ -263,10 +311,24 @@ rename name@(Name (V nm r a)) ns = case takeWhile (/= '.') nm of
   (_ : _) -> map (\n -> Name (V (index nm n) r a)) ns
   _ -> [name]
 
+nUniqueFromM :: Int -> Int -> Gen [Int]
+nUniqueFromM n m
+  | n == 0 = pure []
+  | n > m = pure [0 .. m]
+  | otherwise = Set.toList <$> setSized ["from Choose", "nUniqueFromM " ++ show n ++ " " ++ show m] n (choose (0, m))
+
+pickNunique :: Int -> [a] -> Gen [a]
+pickNunique n xs = do
+  indexes <- nUniqueFromM n (length xs - 1)
+  pure [xs !! i | i <- indexes]
+
 rewritePred :: Int -> Pred era -> Gen ([Pred era], Int)
 rewritePred m0 (Choose (Lit SizeR sz) (Var v) ps) = do
   count <- genFromSize sz
-  ps2 <- vectorOf count (elements ps)
+  ps2 <-
+    if count <= length ps
+      then take count <$> shuffle ps
+      else vectorOf count (elements ps)
   let ((m1, _), ps3) = List.foldl' freshPairs ((m0, []), []) ps2
       (xs, m2) = freshVars m1 count v
       renamedPred = map snd ps3
@@ -301,7 +363,7 @@ rewritePred m0 (Maybe (Var v) target preds) = do
 rewritePred m0 p = pure ([p], m0)
 
 removeExpandablePred :: ([Pred era], Int) -> [Pred era] -> Gen ([Pred era], Int)
-removeExpandablePred (ps, m) [] = pure (reverse ps, m)
+removeExpandablePred (ps, m) [] = pure (List.nubBy cpeq (reverse ps), m)
 removeExpandablePred (ps, m) (p : more) = do
   (ps2, m1) <- rewritePred m p
   removeExpandablePred (ps2 ++ ps, m1) more

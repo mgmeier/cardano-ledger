@@ -186,43 +186,7 @@ plutusByTag proof tag = trueS ++ falseS
     falseS = [(IsValid False, alwaysFalse proof mlanguage numArgs)]
     mlanguage = primaryLanguage proof
 
-{-
-
-import Test.Cardano.Ledger.Constrained.Ast
-import Test.Cardano.Ledger.Constrained.Env
-import Test.Cardano.Ledger.Constrained.TypeRep
-import Test.Cardano.Ledger.Constrained.Vars(validityInterval)
-import Test.Cardano.Ledger.Generic.PrettyCore (
- pcKeyHash,
- pcScript,
- prettyScript,
- )
-import Cardano.Ledger.Pretty(
- ppMap,
- ppString,
- ppList,
- )
-
--- ==================
-main = do
-  m <- generate (genKeyMap (Babbage Standard))
-  putStrLn(show (ppMap pcKeyHash (ppString . show) m))
-  ss <- generate $ do
-      tag <- arbitrary
-      vi <- arbitrary
-      vectorOf 10 (genCoreScript (Babbage Standard) tag m vi)
-  putStrLn (show (ppList prettyScript ss))
-
-scriptT:: Proof era -> Tag -> Target era (Gen (Script era))
-scriptT p tag = Constr "GenCoreScript" (genCoreScript p tag)
-            ^$ keymapUniv
-            ^$ validityInterval
-
-keymapUniv = Var (V "keymapUniv" (MapR WitHashR KeyPairR) No)
-
--- spendMapUniv = Var (V "spendMapUniv"
-
--}
+-- ===================================================
 
 -- The function 'witsVKeyNeededFromBody' computes the necesary (but not sufficient)
 -- key witnesses. Some of the missing ones have to do with MultiSig (and Timelock) scripts
@@ -233,10 +197,13 @@ sufficientMultiSig :: Era era => Shelley.MultiSig era -> Set (KeyHash 'Witness (
 sufficientMultiSig x = case x of
   Shelley.RequireSignature kh -> Set.singleton kh
   Shelley.RequireAllOf xs -> Set.unions (map sufficientMultiSig xs)
-  Shelley.RequireAnyOf xs -> smallest (map sufficientMultiSig xs)
+  Shelley.RequireAnyOf xs ->
+    case List.sortBy p (filter (not . Set.null) (map sufficientMultiSig (toList xs))) of
+      [] -> Set.empty
+      (s : _) -> s
   Shelley.RequireMOf n xs -> Set.unions (take n (List.sortBy p (map sufficientMultiSig xs)))
-    where
-      p a b = compare (Set.size a) (Set.size b)
+  where
+    p a b = compare (Set.size a) (Set.size b)
 
 smallest :: [Set x] -> Set x
 smallest xs = help Set.empty xs
@@ -251,12 +218,15 @@ sufficientTimelock :: Era era => Time.Timelock era -> Set (KeyHash 'Witness (Era
 sufficientTimelock x = case x of
   Time.RequireSignature kh -> Set.singleton kh
   Time.RequireAllOf xs -> Set.unions (fmap sufficientTimelock xs)
-  Time.RequireAnyOf xs -> smallest (map sufficientTimelock (toList xs))
+  Time.RequireAnyOf xs ->
+    case List.sortBy p (filter (not . Set.null) (map sufficientTimelock (toList xs))) of
+      [] -> Set.empty
+      (s : _) -> s
   Time.RequireMOf n xs -> Set.unions (take n (List.sortBy p (map sufficientTimelock (toList xs))))
-    where
-      p a b = compare (Set.size a) (Set.size b)
   Time.RequireTimeExpire {} -> Set.empty
   Time.RequireTimeStart {} -> Set.empty
+  where
+    p a b = compare (Set.size a) (Set.size b)
 
 sufficientScript :: Proof era -> Script era -> Set (KeyHash 'Witness (EraCrypto era))
 sufficientScript p s = case whichScript p of

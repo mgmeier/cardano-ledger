@@ -1521,7 +1521,13 @@ pcPair :: (t1 -> PDoc) -> (t2 -> PDoc) -> (t1, t2) -> PDoc
 pcPair pp1 pp2 (x, y) = parens (hsep [pp1 x, ppString ",", pp2 y])
 
 pcWitVKey :: (Reflect era, Typeable keyrole) => Proof era -> WitVKey keyrole (EraCrypto era) -> PDoc
-pcWitVKey _p (WitVKey vk@(VKey x) sig) = ppSexp "WitVKey" [ppString keystring, ppString (drop 12 sigstring), hash]
+pcWitVKey _p (WitVKey vk@(VKey x) sig) =
+  ppSexp
+    "WitVKey"
+    [ ppString (" VerKey=" ++ (take 10 (drop 19 keystring)))
+    , ppString (" SignKey=" ++ (take 10 (drop 29 sigstring)))
+    , " VerKeyHash=" <> hash
+    ]
   where
     keystring = show x
     hash = pcKeyHash (hashKey vk)

@@ -7,7 +7,7 @@
 module Test.Cardano.Ledger.Constrained.Preds.Certs where
 
 import Cardano.Ledger.BaseTypes (EpochNo (..), maybeToStrictMaybe)
-import Cardano.Ledger.Coin (Coin (..), DeltaCoin)
+import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Conway.TxCert (
   ConwayDelegCert (..),
   ConwayTxCert (..),
@@ -32,12 +32,13 @@ import Lens.Micro (lens)
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Classes
 import Test.Cardano.Ledger.Constrained.Env
-import Test.Cardano.Ledger.Constrained.Monad (monadTyped)
+import Test.Cardano.Ledger.Constrained.Monad (generateWithSeed, monadTyped)
 import Test.Cardano.Ledger.Constrained.Preds.CertState (dstateStage, pstateStage, vstateStage)
 import Test.Cardano.Ledger.Constrained.Preds.PParams (pParamsStage)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
-import Test.Cardano.Ledger.Constrained.Preds.Universes
+import Test.Cardano.Ledger.Constrained.Preds.Universes (universeStage)
 import Test.Cardano.Ledger.Constrained.Rewrite
+import Test.Cardano.Ledger.Constrained.Size (OrdCond (..))
 import Test.Cardano.Ledger.Constrained.Solver (toolChainSub)
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars
@@ -49,6 +50,7 @@ import Cardano.Crypto.Hash.Class (Hash)
 import Cardano.Crypto.VRF.Class (VerKeyVRF)
 import Cardano.Ledger.Address (RewardAcnt (..))
 import Cardano.Ledger.Crypto (HASH, VRF)
+import Cardano.Ledger.Shelley.LedgerState (availableAfterMIR)
 
 -- =============================================
 -- Shelley Cert Targets
@@ -68,11 +70,11 @@ sRegPool = Constr "sRegPool" (\x -> ShelleyTxCertPool (RegPool x))
 sRetirePool :: Target era (KeyHash 'StakePool (EraCrypto era) -> EpochNo -> ShelleyTxCert era)
 sRetirePool = Constr "sRetirePool" (\x e -> ShelleyTxCertPool (RetirePool x e))
 
-sMirDistribute :: Target era (MIRPot -> Map (Credential 'Staking (EraCrypto era)) DeltaCoin -> ShelleyTxCert era)
-sMirDistribute = Constr "sMirDistribute" (\x m -> ShelleyTxCertMir (MIRCert x (StakeAddressesMIR m)))
+sMirDistribute :: Target era (Coin -> MIRPot -> Map (Credential 'Staking (EraCrypto era)) DeltaCoin -> ShelleyTxCert era)
+sMirDistribute = Constr "sMirDistribute" (\_avail x m -> ShelleyTxCertMir (MIRCert x (StakeAddressesMIR m)))
 
-sMirShift :: Target era (MIRPot -> Coin -> ShelleyTxCert era)
-sMirShift = Constr "sMirShift" (\x c -> ShelleyTxCertMir (MIRCert x (SendToOppositePotMIR c)))
+sMirShift :: Target era (Coin -> MIRPot -> Coin -> ShelleyTxCert era)
+sMirShift = Constr "sMirShift" (\_avail x c -> ShelleyTxCertMir (MIRCert x (SendToOppositePotMIR c)))
 
 sGovern ::
   Target
@@ -83,6 +85,12 @@ sGovern ::
       ShelleyTxCert era
     )
 sGovern = Constr "sGovern" (\a b c -> ShelleyTxCertGenesisDeleg (GenesisDelegCert a b c))
+
+-- | Given a MIRPot (ReservesMIR or TreasuryMIR) compute the amount available for
+--   a transfer. Takes into account the 'treasury', 'reserves' and the instaneousRewards
+--   in the LedgerState by looking them up in the Env.
+availableT :: Term era MIRPot -> Target era Coin
+availableT pot = Constr "available" availableAfterMIR ^$ pot :$ accountStateT :$ instantaneousRewardsT
 
 -- ==========================================
 -- Conway Cert Targets
@@ -177,10 +185,21 @@ certsPreds p = case whichTxCert p of
             ]
           )
         ,
-          ( sMirDistribute ^$ pot ^$ mirdistr
-          , [Random pot, Sized (Range 1 6) (Dom mirdistr), Random mirdistr] -- TODO Sum of the Distr must have some bounds
+          ( sMirDistribute ^$ available ^$ pot ^$ mirdistr
+          ,
+            [ Random pot
+            , available :<-: availableT pot
+            , SumsTo (Left (DeltaCoin (-100))) (Delta available) GTE [SumMap mirdistr]
+            ]
           )
-        , (sMirShift ^$ pot ^$ mircoin, [Random pot, mircoin :<-: (Constr "shift" shift ^$ pot ^$ reserves ^$ treasury)])
+        ,
+          ( sMirShift ^$ available ^$ pot ^$ mircoin
+          ,
+            [ Random pot
+            , available :<-: availableT pot
+            , SumsTo (Left (Coin 1)) available GTE [One mircoin]
+            ]
+          )
         ]
     ]
   TxCertConwayToConway ->
@@ -265,6 +284,7 @@ certsPreds p = case whichTxCert p of
     poolOwners = Var (V "poolOwners" (SetR StakeHashR) (Yes PoolParamsR (lens ppOwners (\x i -> x {ppOwners = i}))))
     poolRewAcnt = Var (V "poolRewAcnt" RewardAcntR (Yes PoolParamsR (lens ppRewardAcnt (\x r -> x {ppRewardAcnt = r}))))
     rewCred = Var (V "rewCred" CredR No)
+    available = Var (V "available" CoinR No)
 
 certsStage ::
   Reflect era =>
@@ -275,12 +295,14 @@ certsStage proof subst0 = do
   let preds = certsPreds proof
   toolChainSub proof standardOrderInfo preds subst0
 
-main :: IO ()
-main = do
-  let proof = Conway Standard
-  -- Babbage Standard
+main :: Int -> IO ()
+main seed = do
+  let proof =
+        -- Conway Standard
+        Babbage Standard
   env <-
-    generate
+    generateWithSeed
+      seed
       ( pure []
           >>= pParamsStage proof
           >>= universeStage proof
@@ -296,7 +318,3 @@ main = do
   putStrLn (show (ppList (\(TxCertF _ x) -> pcTxCert proof x) certsv))
   _ <- goRepl proof env ""
   pure ()
-
-shift :: MIRPot -> Coin -> Coin -> Coin
-shift ReservesMIR res _treas = res
-shift TreasuryMIR _res treas = treas

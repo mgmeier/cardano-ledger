@@ -694,10 +694,10 @@ network = Var (V "network" NetworkR No)
 quorumConstant :: Word64
 quorumConstant = Utils.quorum Utils.testGlobals
 
--- | From Globals. Reflected here as a Literal Constant Term, at type Int,
+-- | From Globals. Reflected here at type Int, This is set to 'quorumConstant' in CertState.
 --   because is is used to compare the Size of things, which are computed as Int
 quorum :: Term era Int
-quorum = Lit IntR (fromIntegral quorumConstant)
+quorum = Var (V "quorum" IntR No)
 
 addrUniv :: Term era (Set (Addr (EraCrypto era)))
 addrUniv = Var $ V "addrUniv" (SetR AddrR) No
@@ -792,7 +792,7 @@ accountStateT = Constr "AccountState" AccountState ^$ treasury ^$ reserves
 
 -- | Target for LedgerState
 ledgerStateT :: Proof era -> Target era (LedgerState era)
-ledgerStateT proof = Constr "LedgerState" LedgerState :$ utxoStateT proof :$ dpstateT
+ledgerStateT proof = Constr "LedgerState" LedgerState :$ utxoStateT proof :$ certstateT
 
 ledgerState :: Reflect era => Term era (LedgerState era)
 ledgerState = Var $ V "ledgerState" (LedgerStateR reify) No
@@ -817,8 +817,8 @@ utxoStateT p = Constr "UTxOState" (utxofun p) ^$ (pparams p) ^$ utxo p ^$ deposi
     utxofun (Conway _) (PParamsF _ pp) u c1 c2 (GovernanceState _ x) = smartUTxOState pp (liftUTxO u) c1 c2 x
 
 -- | Target for CertState
-dpstateT :: Target era (CertState era)
-dpstateT = Constr "CertState" CertState :$ vstateT :$ pstateT :$ dstateT
+certstateT :: Target era (CertState era)
+certstateT = Constr "CertState" CertState :$ vstateT :$ pstateT :$ dstateT
 
 -- | Target for VState
 vstateT :: Target era (VState era)

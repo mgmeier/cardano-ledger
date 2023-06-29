@@ -35,7 +35,7 @@ ledgerStatePreds :: forall era. Reflect era => Proof era -> [Pred era]
 ledgerStatePreds p =
   [ MetaSize (SzRng 20 25) utxoSize -- must be bigger than sum of (maxsize inputs 10) and (mazsize collateral 3)
   , Sized utxoSize preUtxo
-  , Sized (Range 3 4) colUtxo
+  , Sized (Range 14 16) colUtxo
   , MapMember feeTxIn feeTxOut (Right preUtxo)
   , Subset (Dom preUtxo) txinUniv
   , Subset (Rng preUtxo) (txoutUniv p)

@@ -6,14 +6,14 @@ module Test.Cardano.Ledger.Constrained.Preds.CertState where
 
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Era (EraCrypto)
-import Cardano.Ledger.Keys (GenDelegPair (..), GenDelegs (..), KeyHash, KeyRole (..), asWitness, coerceKeyRole)
+import Cardano.Ledger.Keys (GenDelegPair (..), KeyHash, KeyRole (..), asWitness, coerceKeyRole)
 import Cardano.Ledger.Pretty (ppMap)
 import GHC.Real ((%))
 import Lens.Micro
 import Test.Cardano.Ledger.Constrained.Ast
 import Test.Cardano.Ledger.Constrained.Env
 import Test.Cardano.Ledger.Constrained.Lenses (fGenDelegGenKeyHashL)
-import Test.Cardano.Ledger.Constrained.Monad (monadTyped)
+import Test.Cardano.Ledger.Constrained.Monad (generateWithSeed, monadTyped)
 import Test.Cardano.Ledger.Constrained.Preds.Repl (goRepl)
 import Test.Cardano.Ledger.Constrained.Preds.Universes
 import Test.Cardano.Ledger.Constrained.Rewrite (standardOrderInfo)
@@ -137,16 +137,55 @@ mainP = do
   putStrLn "\n"
   putStrLn (unlines (otherFromEnv [] env))
 
+-- =================================================
+-- A Field used to compute 'genDelegs'
+
+-- | A field that selects the 'genDelegKeyHash' field from a 'GenDelegPair'
+--   It also silently casts the 'KeyRole. from 'Genesis to 'Witness
+gdKeyHashField ::
+  Field
+    era
+    (GenDelegPair (EraCrypto era))
+    (KeyHash 'Witness (EraCrypto era))
+gdKeyHashField =
+  Field
+    "gdKeyHash1"
+    WitHashR
+    GenDelegPairR
+    ( lens
+        (\(GenDelegPair x _) -> asWitness x)
+        (\(GenDelegPair _ y) x -> GenDelegPair (coerceKeyRole x) y)
+    )
+
+-- | A Var Term that pairs the Field 'gdKeyHashField'
+gdKeyHash :: Term era (KeyHash 'Witness (EraCrypto era))
+gdKeyHash = fieldToTerm gdKeyHashField
+
+gdkeyL :: Lens' (GenDelegPair c) (KeyHash 'Witness c)
+gdkeyL =
+  ( lens
+      (\(GenDelegPair x _) -> asWitness x)
+      (\(GenDelegPair _ y) x -> GenDelegPair (coerceKeyRole x) y)
+  )
+
 -- ============================================================================
 
-dstatePreds :: Proof era -> [Pred era]
-dstatePreds _p =
-  [ MetaSize (SzRng 8 15) rewardSize
-  , Sized rewardSize rewards -- Small enough that it leaves some slack with credUniv (size about 30),
-  -- but it also cannot be empty
-  , Sized (AtLeast 1) treasury --  If these have size zero, the SumsTo can't be solved
-  , Sized (AtLeast 1) instanReserves
-  , Random instanTreasury
+certStatePreds :: Proof era -> [Pred era]
+certStatePreds _p =
+  [ MetaSize (SzExact (fromIntegral (quorumConstant + 2))) genDelegSize
+  , --  , GenFrom quorum (constTarget (pure (fromIntegral quorumConstant)))
+
+    -- These really belong in the AccountState in the EpochState, But they are the only pieces of the EpochState we use.
+    -- and are necessary to compute the instantaneous rewards, which are in the DState.
+    GenFrom treasury (constTarget (Coin <$> choose (500, 2000)))
+  , GenFrom reserves (constTarget (Coin <$> choose (700, 1500)))
+  , -- 'rewards' needs to be small enough that it leaves some slack with
+    -- credUniv (size about 30), but it also cannot be empty
+    MetaSize (SzRng 8 15) rewardSize
+  , Sized rewardSize rewards
+  , -- If 'instanReserves' or 'instanTreasury' have size zero, the SumsTo can't be solved
+    Sized (AtLeast 1) instanReserves
+  , Sized (AtLeast 1) instanTreasury
   , Dom rewards :⊆: credsUniv
   , GenFrom rewardRange (Constr "many" manyCoin ^$ rewardSize)
   , rewardRange :=: Elems rewards
@@ -154,19 +193,20 @@ dstatePreds _p =
   , Dom rewards :=: Dom stakeDeposits
   , Dom delegations :⊆: Dom rewards
   , Dom rewards :=: Rng ptrs
-  , Sized (ExactSize (fromIntegral (quorumConstant + 2))) (Dom genDelegs)
-  , --  , Dom genDelegs :⊆: Dom genesisHashUniv
-    -- , Component (Rng genDelegs) [Member gdkeyhash keymapUniv]
-    ForEach
-      (Range 5 5)
-      genDelegs
-      genDelegPat
-      [ Member (Right (fieldToTerm gdDomain)) (Dom genesisHashUniv)
-      , Member (Right (fieldToTerm gdKeyHash)) (Dom keymapUniv)
-      ]
+  , -- Preds to compute genDelegs
+    -- First, a set of GenDelegPairs, where no keyHash is repeated.
+    Sized genDelegSize gdKeyHashSet
+  , ProjS gdkeyL WitHashR gdKeyHashSet `Subset` (Dom keymapUniv)
+  , gdKeyHashList :<-: setToListTarget gdKeyHashSet
+  , Sized genDelegSize genDelegs
+  , gdKeyHashList :=: Elems genDelegs
+  , Dom genDelegs :⊆: Dom genesisHashUniv
   , Negate (deltaReserves) :=: deltaTreasury
-  , SumsTo (Right (Coin 1)) instanReservesSum EQL [SumMap instanReserves]
+  , Dom instanReserves :⊆: credsUniv
+  , SumsTo (Left (Coin 1)) instanReservesSum EQL [SumMap instanReserves]
   , SumsTo (Right (DeltaCoin 1)) (Delta instanReservesSum) LTH [One (Delta reserves), One deltaReserves]
+  , Dom instanTreasury :⊆: credsUniv
+  , NotMember (Lit CoinR (Coin 0)) (Rng instanTreasury)
   , SumsTo (Right (Coin 1)) instanTreasurySum EQL [SumMap instanTreasury]
   , SumsTo (Right (DeltaCoin 1)) (Delta instanTreasurySum) LTH [One (Delta treasury), One deltaTreasury]
   , ProjS fGenDelegGenKeyHashL GenHashR (Dom futureGenDelegs) :=: Dom genDelegs
@@ -176,19 +216,23 @@ dstatePreds _p =
     instanTreasurySum = Var (V "instanTreasurySum" CoinR No)
     rewardSize = var "rewardSize" SizeR
     rewardRange = var "rewardRange" (ListR CoinR)
+    genDelegSize = var "genDelegSize" SizeR
+    gdKeyHashSet = var " gdKeyHashSet" (SetR GenDelegPairR)
+    gdKeyHashList = var " gdKeyHashList" (ListR GenDelegPairR)
 
 dstateStage ::
   Reflect era =>
   Proof era ->
   Subst era ->
   Gen (Subst era)
-dstateStage proof = toolChainSub proof standardOrderInfo (dstatePreds proof)
+dstateStage proof = toolChainSub proof standardOrderInfo (certStatePreds proof)
 
-mainD :: IO ()
-mainD = do
+mainD :: Int -> IO ()
+mainD seed = do
   let proof = Babbage Standard
   env <-
-    generate
+    generateWithSeed
+      seed
       ( pure []
           >>= universeStage proof
           >>= dstateStage proof
@@ -212,34 +256,36 @@ mainC = do
           >>= dstateStage proof
           >>= (\subst -> monadTyped $ substToEnv subst emptyEnv)
       )
-  certState <- monadTyped $ runTarget env dpstateT
+  certState <- monadTyped $ runTarget env certstateT
   putStrLn (show (prettyC proof certState))
-  putStrLn "\n"
-  putStrLn (unlines (otherFromEnv [] env))
 
--- =================================================
--- Some Fields used to compute 'genDelegs'
+-- putStrLn "\n"
+-- putStrLn (unlines (otherFromEnv [] env))
 
-ll :: Lens' (KeyHash 'Genesis c, GenDelegPair c) (KeyHash 'Witness c)
-ll =
-  lens
-    (\(_, GenDelegPair x _) -> asWitness x)
-    (\(x, GenDelegPair _ z) y -> (x, GenDelegPair (coerceKeyRole y) z))
+-- ===============================
+{-
+testPreds :: [Pred era]
+testPreds =
+     [ ProjS gdkeyL WitHashR gdKeyHashSet `Subset` (Dom keymapUniv)
+     , Sized (Range 10 10) gdKeyHashSet
+     , gdKeyHashList :<-: setToListTarget gdKeyHashSet
+     , Sized (Range 10 10) genDelegs
+     , gdKeyHashList :=: Elems genDelegs
+     , Dom genDelegs :⊆: Dom genesisHashUniv
+     ]
+   where gdKeyHashSet = var " gdKeyHashSet" (SetR GenDelegPairR)
+         gdKeyHashList = var " gdKeyHashList" (ListR GenDelegPairR)
 
-gdKeyHash = Field "gdKeyHash" WitHashR (PairR GenHashR GenDelegPairR) ll
+mainT :: IO ()
+mainT = do
+  let proof = Babbage Standard
+  env <-
+    generate
+      ( pure []
+          >>= universeStage proof
+          >>= toolChainSub proof standardOrderInfo testPreds
+          >>= (\subst -> monadTyped $ substToEnv subst emptyEnv)
+      )
+  goRepl proof env ""
 
-gdDomain = Field "gdDomain" GenHashR (PairR GenHashR GenDelegPairR) (lens fst (\(_, y) x -> (x, y)))
-
--- | Pat that encodes a pattern binding two variables in a Pair.
---   In Haskell we would write (gdDomain,GenDelegPair gdKeyHash _)
-genDelegPat :: Pat era (KeyHash 'Genesis (EraCrypto era), GenDelegPair (EraCrypto era))
-genDelegPat = Pat (PairR GenHashR GenDelegPairR) [Arg gdDomain, Arg gdKeyHash]
-
-predX =
-  ForEach
-    (Range 6 8)
-    genDelegs
-    genDelegPat
-    [ Member (Right (fieldToTerm gdDomain)) (Dom genesisHashUniv)
-    , Member (Right (fieldToTerm gdKeyHash)) (Dom keymapUniv)
-    ]
+-}

@@ -481,6 +481,14 @@ solveSet v1@(V _ (SetR r) _) predicate = case predicate of
     ys <- mapM simplify xs
     pure $ SetSpec (SzMost (length ys)) (relEqual r (makeFromList ys))
   (Random (Var v2)) | Name v1 == Name v2 -> setSpec SzAny RelAny
+  (ProjS lensbt trep (Var v2@(V _ (SetR brep) _)) :=: Dom (Lit (MapR drep _) x))
+    | Name v1 == Name v2 -> do
+        Refl <- sameRep r brep
+        setSpec (SzExact (Map.size x)) (RelLens lensbt r trep (relEqual drep (Map.keysSet x)))
+  (ProjS lensbt trep (Var v2@(V _ (SetR brep) _)) `Subset` Dom (Lit (MapR drep _) x))
+    | Name v1 == Name v2 -> do
+        Refl <- sameRep r brep
+        setSpec (SzMost (Map.size x)) (RelLens lensbt r trep (relSubset drep (Map.keysSet x)))
   cond -> failT ["Can't solveSet " ++ show cond ++ " for variable " ++ show v1]
 
 solveSets :: V era (Set a) -> [Pred era] -> Typed (SetSpec era a)
@@ -495,7 +503,7 @@ solveSets v@(V nm (SetR _) _) cs =
 -- ========================================================
 -- Solving for variables with an Adds instance
 
-solveSum :: Adds t => V era t -> Pred era -> Typed (AddsSpec t)
+solveSum :: forall era t. Adds t => V era t -> Pred era -> Typed (AddsSpec t)
 solveSum v1@(V nam r _) predx =
   case predx of
     (Sized expr (Var v2@(V nm _ _))) | Name v1 == Name v2 -> do
@@ -553,6 +561,10 @@ solveSum v1@(V nam r _) predx =
         CoinR -> pure $ vLeft nam cond rhsTotal
         DeltaCoinR -> pure $ vLeft nam cond rhsTotal
         other -> failT [show predx, show other ++ " should be either Coin or DeltaCoin"]
+    (Var v2@(V nm r2 _) :<-: tar) | Name v1 == Name v2 -> do
+      Refl <- sameRep r r2
+      x <- simplifyTarget @era @t tar
+      pure (AddsSpecSize nm (SzExact (toI x)))
     other -> failT ["Can't solveSum " ++ show (Name v1) ++ " = " ++ show other]
 
 solveSums :: Adds t => V era t -> [Pred era] -> Typed (AddsSpec t)
