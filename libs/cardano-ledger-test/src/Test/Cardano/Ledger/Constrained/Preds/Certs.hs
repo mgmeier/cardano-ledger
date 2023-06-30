@@ -189,7 +189,7 @@ certsPreds p = case whichTxCert p of
           ,
             [ Random pot
             , available :<-: availableT pot
-            , SumsTo (Left (DeltaCoin (-100))) (Delta available) GTE [SumMap mirdistr]
+            , SumsTo (Left (DeltaCoin (-1))) (Delta available) GTE [SumMap mirdistr]
             ]
           )
         ,

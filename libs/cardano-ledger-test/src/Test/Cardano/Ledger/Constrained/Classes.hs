@@ -87,8 +87,9 @@ import Test.QuickCheck (
   frequency,
   oneof,
   shuffle,
-  vectorOf,
+  suchThat,
   -- generate,
+  vectorOf,
  )
 
 -- import Debug.Trace
@@ -101,6 +102,7 @@ import Test.QuickCheck (
 -- import Cardano.Ledger.Alonzo.Tx(IsValid(..))
 import Cardano.Ledger.Alonzo.TxWits ()
 import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..))
+import Test.Cardano.Ledger.Generic.Functions (protocolVersion)
 
 -- =====================================================================
 -- Helper functions
@@ -466,12 +468,12 @@ pcAuxData :: Proof era -> TxAuxData era -> PDoc
 pcAuxData p _x = ppString ("TxAuxData " ++ show p) -- TODO make this more accurate
 
 genTxAuxDataF :: Proof era -> Gen (TxAuxDataF era)
-genTxAuxDataF p@(Shelley _) = TxAuxDataF p <$> arbitrary
-genTxAuxDataF p@(Allegra _) = TxAuxDataF p <$> arbitrary
-genTxAuxDataF p@(Mary _) = TxAuxDataF p <$> arbitrary
-genTxAuxDataF p@(Alonzo _) = TxAuxDataF p <$> arbitrary
-genTxAuxDataF p@(Babbage _) = TxAuxDataF p <$> arbitrary
-genTxAuxDataF p@(Conway _) = TxAuxDataF p <$> arbitrary
+genTxAuxDataF p@(Shelley _) = TxAuxDataF p <$> suchThat arbitrary (validateTxAuxData (protocolVersion p))
+genTxAuxDataF p@(Allegra _) = TxAuxDataF p <$> suchThat arbitrary (validateTxAuxData (protocolVersion p))
+genTxAuxDataF p@(Mary _) = TxAuxDataF p <$> suchThat arbitrary (validateTxAuxData (protocolVersion p))
+genTxAuxDataF p@(Alonzo _) = TxAuxDataF p <$> suchThat arbitrary (validateTxAuxData (protocolVersion p))
+genTxAuxDataF p@(Babbage _) = TxAuxDataF p <$> suchThat arbitrary (validateTxAuxData (protocolVersion p))
+genTxAuxDataF p@(Conway _) = TxAuxDataF p <$> suchThat arbitrary (validateTxAuxData (protocolVersion p))
 
 -- ==============
 
@@ -888,7 +890,7 @@ integerPartition msgs typname smallest size total
       Nothing ->
         let mean = total `div` fromIntegral (size + 1)
             go 1 total1
-              | total1 < 1 = errorMess ("Ran out of choices(2), total went negative: " ++ show total1) msgs
+              | total1 < 1 && smallest > 0 = errorMess ("Ran out of choices(2), total went negative: " ++ show total1) msgs
               | otherwise = pure [total1]
             go 2 total1 = do
               z <- choose (smallest, total1 - 1)

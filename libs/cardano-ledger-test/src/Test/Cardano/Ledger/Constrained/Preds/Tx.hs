@@ -25,7 +25,7 @@ import Cardano.Ledger.Alonzo.TxWits (
  )
 import Cardano.Ledger.Alonzo.UTxO (getInputDataHashesTxBody)
 import Cardano.Ledger.Api (setMinFeeTx)
-import Cardano.Ledger.BaseTypes (Network (..), StrictMaybe (..), strictMaybeToMaybe)
+import Cardano.Ledger.BaseTypes (Network (..), ProtVer (..), StrictMaybe (..), strictMaybeToMaybe)
 import Cardano.Ledger.Coin (Coin (..), rationalToCoinViaCeiling)
 import Cardano.Ledger.Core (EraScript (..), EraTx (..), EraTxBody (..), EraTxOut (..), TxCert, Value, bodyTxL, coinTxOutL, feeTxBodyL)
 import Cardano.Ledger.Era (Era (EraCrypto))
@@ -34,7 +34,7 @@ import Cardano.Ledger.Keys (GenDelegPair (..), GenDelegs (..), Hash, KeyHash, Ke
 import Cardano.Ledger.Keys.Bootstrap (BootstrapWitness)
 import Cardano.Ledger.Mary.Core (MaryEraTxBody)
 import Cardano.Ledger.Mary.Value (AssetName, MaryValue (..), MultiAsset (..), PolicyID (..))
-import Cardano.Ledger.Pretty (PrettyA (..), ppList, ppMap, ppSet)
+import Cardano.Ledger.Pretty (PDoc, PrettyA (..), ppList, ppMap, ppRecord, ppSafeHash, ppSet)
 import Cardano.Ledger.SafeHash (SafeHash, extractHash, hashAnnotated)
 import Cardano.Ledger.Shelley.AdaPots (consumedTxBody, producedTxBody)
 import Cardano.Ledger.Shelley.LedgerState (AccountState (..), LedgerState, keyCertsRefunds, totalCertsDeposits)
@@ -73,7 +73,7 @@ import Test.Cardano.Ledger.Constrained.Solver (toolChainSub)
 import Test.Cardano.Ledger.Constrained.TypeRep
 import Test.Cardano.Ledger.Constrained.Vars hiding (totalAda)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..), mkWitnessVKey)
-import Test.Cardano.Ledger.Generic.Functions (TotalAda (totalAda), isValid')
+import Test.Cardano.Ledger.Generic.Functions (TotalAda (totalAda), isValid', protocolVersion)
 import Test.Cardano.Ledger.Generic.PrettyCore (
   pcGenDelegPair,
   pcKeyHash,
@@ -82,6 +82,8 @@ import Test.Cardano.Ledger.Generic.PrettyCore (
   pcScriptHash,
   pcTx,
   pcTxBody,
+  pcTxBodyField,
+  pcTxField,
   pcTxIn,
   pcTxOut,
  )
@@ -94,8 +96,27 @@ import Test.QuickCheck
 import Cardano.Ledger.Babbage.Tx (refScripts)
 
 import qualified Cardano.Ledger.Allegra.Scripts as Time (Timelock (..))
+import Cardano.Ledger.Binary.Decoding (mkSized, sizedSize)
+import Cardano.Ledger.Binary.Encoding (EncCBOR)
 import Cardano.Ledger.Shelley.Scripts (MultiSig (..))
 import Cardano.Ledger.Shelley.TxCert (isInstantaneousRewards)
+import Data.Text (Text, pack)
+import Test.Cardano.Ledger.Generic.Fields (TxBodyField (..), TxField (..), abstractTx, abstractTxBody)
+
+import qualified Cardano.Ledger.Shelley.SoftForks as SoftForks (validMetadata)
+
+-- SoftForks.validMetadata $ protocolVersion (Babbage Standard)
+
+-- ===========================================================
+
+txBodySize :: forall era. Reflect era => TxBody era -> Int
+txBodySize txb = fromIntegral (sizedSize (mkSized (pvMajor (protocolVersion (reify @era))) txb))
+
+byteSize :: forall era a. (EncCBOR a, Reflect era) => Proof era -> a -> Int
+byteSize _ x = fromIntegral (sizedSize (mkSized (pvMajor (protocolVersion (reify @era))) x))
+
+byteSizeT :: forall era a. (EncCBOR a, Reflect era) => Term era a -> Target era Int
+byteSizeT x = Constr "byteSize" (byteSize (reify @era)) ^$ x
 
 -- ===============================================
 -- Helpful Lenses
@@ -239,6 +260,10 @@ sufficientTxCert cs gendel = case whichTxCert (reify @era) of
           then Set.union ans (sufficientGenDelegs gendel)
           else ans
 
+-- | Compute sufficient set of keys to make the scripts succeed.
+--   The script map is the map of all 'needed' scripts. Some of those
+--   scripts may NOT be in the 'scriptWits' (those which are reference scripts)
+--   but all needed scripts will need to have their KeyHashes added.
 sufficientScriptKeys ::
   Proof era ->
   Map (ScriptHash (EraCrypto era)) (ScriptF era) ->
@@ -262,7 +287,10 @@ sufficientKeyHashes p scriptmap cs gendel =
 -- =======================================
 
 pcUtxo :: Reflect era => Map (TxIn (EraCrypto era)) (TxOutF era) -> String
-pcUtxo m = show (ppMap pcTxIn (\(TxOutF p o) -> pcTxOut p o) m)
+pcUtxo m = show (pcUtxoDoc m)
+
+pcUtxoDoc :: Reflect era => Map (TxIn (EraCrypto era)) (TxOutF era) -> PDoc
+pcUtxoDoc m = ppMap pcTxIn (\(TxOutF p o) -> pcTxOut p o) m
 
 necessaryKeyHashTarget ::
   Reflect era =>
@@ -299,25 +327,12 @@ necessaryKeyHashes ::
   TxBodyF era ->
   Map (TxIn (EraCrypto era)) (TxOutF era) ->
   Map (KeyHash 'Genesis (EraCrypto era)) (GenDelegPair (EraCrypto era)) ->
-  -- Map (KeyHash 'Witness (EraCrypto era)) (KeyPair 'Witness (EraCrypto era)) ->
   Set (KeyHash 'Witness (EraCrypto era)) -> -- Only in Eras Alonzo To Conway,
-  -- Set (WitVKey 'Witness (EraCrypto era))
   Set (KeyHash 'Witness (EraCrypto era))
 necessaryKeyHashes (TxBodyF _ txb) u gd reqsigners = keyhashes
   where
-    -- bodyhash :: SafeHash (EraCrypto era) EraIndependentTxBody
-    -- bodyhash = hashAnnotated txb
     keyhashes :: Set (KeyHash 'Witness (EraCrypto era))
     keyhashes = Set.union (witsVKeyNeededFromBody (liftUTxO u) txb (GenDelegs gd)) reqsigners
-
-{-
-    keywits :: Set (WitVKey 'Witness (EraCrypto era))
-    keywits = Set.foldl' accum Set.empty keyhashes
-      where
-        accum ans hash = case Map.lookup hash keyUniv of
-          Nothing -> error ("hash not in keyUniv "++show hash++"\n"++show(pcTxBody reify txb)++"\n"++(pcUtxo u)++"\n"++show gd)
-          Just keypair -> Set.insert (mkWitnessVKey bodyhash keypair) ans
--}
 
 -- ========================================================
 
@@ -422,9 +437,7 @@ minusMultiValue p v1 v2 = case whichValue p of
 txBodyPreds :: forall era. Reflect era => Proof era -> [Pred era]
 txBodyPreds p =
   (txOutPreds p balanceCoin (outputs p))
-    ++ [ -- Sized (Range 0 3) mint
-         --  , Subset (Dom mint) (Dom (nonSpendScriptUniv p))
-         mint :<-: (Constr "sumAssets" (\out spend -> minusMultiValue p (txoutSum out) (txoutSum spend)) ^$ (outputs p) ^$ spending)
+    ++ [ mint :<-: (Constr "sumAssets" (\out spend -> minusMultiValue p (txoutSum out) (txoutSum spend)) ^$ (outputs p) ^$ spending)
        , networkID :<-: justTarget network
        , -- inputs
          Sized (Range 2 10) inputs
@@ -462,20 +475,28 @@ txBodyPreds p =
        , txrefunds :<-: (Constr "certsRefunds" certsRefunds ^$ pparams p ^$ stakeDeposits ^$ certs)
        , txdeposits :<-: (Constr "certsDeposits" certsDeposits ^$ pparams p ^$ regPools ^$ certs)
        , scriptsNeeded :<-: (needT p ^$ tempTxBody ^$ (utxo p))
-       , --  , Elems (ProjM fstL IsValidR (Restrict (Dom scriptWits) plutusUniv)) :=: valids
-         txisvalid :<-: (Constr "allValid" allValid ^$ valids)
+       , txisvalid :<-: (Constr "allValid" allValid ^$ valids)
        , Maybe txauxdata (Simple oneAuxdata) [Random oneAuxdata]
        , adHash :<-: (Constr "hashMaybe" (hashTxAuxDataF <$>) ^$ txauxdata)
        , -- Construct a temporary 'Tx' with a size close to the size of the Tx we want.
          -- We will use this to compute the 'txfee' using a fix-point approach.
-         Random tempWppHash
+         Random randomWppHash
+       , tempWppHash :<-: justTarget randomWppHash
        , tempTxFee :<-: (constTarget (Coin (fromIntegral (maxBound :: Word64))))
        , tempTxBody :<-: txbodyTarget tempTxFee tempWppHash (Lit CoinR (Coin (fromIntegral (maxBound :: Word64))))
        , tempTx :<-: txTarget tempTxBody tempBootWits tempKeyWits
-       , -- Compute the the real fee, and then recompute the TxBody and the Tx
+       , -- Compute the real fee, and then recompute the TxBody and the Tx
          txfee :<-: (Constr "finalFee" computeFinalFee ^$ (pparams p) ^$ tempTx)
        , txbodyterm :<-: txbodyTarget txfee wppHash totalCol
        , txterm :<-: txTarget txbodyterm bootWits keyWits
+       , tempSize :<-: (Constr "txBodySize" (\(TxBodyF _ x) -> txBodySize x) ^$ tempTxBody)
+       , realSize :<-: (Constr "txBodySize" (\(TxBodyF _ x) -> txBodySize x) ^$ txbodyterm)
+       , tbootSize :<-: byteSizeT tempBootWits
+       , tKeySize :<-: byteSizeT tempKeyWits
+       , bootSize :<-: byteSizeT bootWits
+       , keySize :<-: byteSizeT keyWits
+       , twppSize :<-: byteSizeT tempWppHash
+       , wppSize :<-: byteSizeT wppHash
        ]
     ++ case whichUTxO p of
       UTxOShelleyToMary ->
@@ -490,10 +511,14 @@ txBodyPreds p =
         ]
       UTxOAlonzoToConway ->
         [ Proj acNeededL (ListR (PairR (ScriptPurposeR p) ScriptHashR)) scriptsNeeded :=: acNeeded
-        , neededHashSet :<-: (Constr "toSet" (\x -> Set.fromList (map snd x)) ^$ acNeeded)
-        , Elems (ProjM fstL IsValidR (Restrict neededHashSet plutusUniv)) :=: valids
-        , refAdjusted :<-: (Constr "adjust" (adjustNeededByRefScripts p) ^$ inputs ^$ (utxo p) ^$ neededHashSet)
+        , -- Hashes of scripts that will be run. Not all of these will be in the 'scriptWits'
+          neededHashSet :<-: (Constr "toSet" (\x -> Set.fromList (map snd x)) ^$ acNeeded)
+        , -- Only the refAdjusted scripts need to be in the 'scriptWits' but if the refscripts that are
+          -- excluded from 'scriptWits' are Timelock scripts, a sufficient set keys must be added to
+          -- the sufficient key hashes.
+          refAdjusted :<-: (Constr "adjust" (adjustNeededByRefScripts p) ^$ inputs ^$ refInputs ^$ (utxo p) ^$ neededHashSet)
         , scriptWits :=: Restrict refAdjusted (allScriptUniv p)
+        , Elems (ProjM fstL IsValidR (Restrict neededHashSet plutusUniv)) :=: valids
         , rdmrPtrs :<-: (rdmrPtrsT ^$ tempTxBody ^$ acNeeded ^$ plutusUniv)
         , rdmrPtrs :=: Dom redeemers
         , SumsTo (Left (ExUnits 1 1)) (maxTxExUnits p) EQL [ProjMap ExUnitsR sndL redeemers]
@@ -508,11 +533,18 @@ txBodyPreds p =
         , Restrict plutusDataHashes dataUniv :=: dataWits
         , tempBootWits :<-: (Constr "boots" (bootWitsT p) ^$ spending ^$ tempTxBody ^$ byronAddrUniv)
         , necessaryHashes :<-: necessaryKeyHashTarget tempTxBody reqSignerHashes
-        , sufficientHashes :<-: (Constr "sufficient" (sufficientKeyHashes p) ^$ scriptWits ^$ certs ^$ genDelegs)
+        , sufficientHashes
+            :<-: ( Constr "sufficient" (sufficientKeyHashes p)
+                    ^$ (Restrict neededHashSet (allScriptUniv p))
+                    ^$ certs
+                    ^$ genDelegs
+                 )
         , tempKeyWits :<-: makeKeyWitnessTarget tempTxBody necessaryHashes sufficientHashes scriptWits
         , bootWits :<-: (Constr "boots" (bootWitsT p) ^$ spending ^$ txbodyterm ^$ byronAddrUniv)
         , keyWits :<-: makeKeyWitnessTarget txbodyterm necessaryHashes sufficientHashes scriptWits
-        , langs :<-: (Constr "languages" scriptWitsLangs ^$ scriptWits)
+        , -- 'langs' is not computed from the 'scriptWits' because that does not include needed
+          -- scripts that are reference scripts, So get the scripts from the neededHashSet
+          langs :<-: (Constr "languages" scriptWitsLangs ^$ (Restrict neededHashSet (allScriptUniv p)))
         , wppHash :<-: integrityHash p (pparams p) langs redeemers dataWits
         , owed
             :<-: ( Constr "owed" (\percent (Coin fee) -> rationalToCoinViaCeiling ((fromIntegral percent * fee) % 100))
@@ -524,7 +556,8 @@ txBodyPreds p =
           extraCol :<-: (Constr "extraCol" (\(Coin suminputs) (Coin owe) -> (Coin (owe + 1 - suminputs))) ^$ sumCol ^$ owed)
         , totalCol :<-: (Constr "(<+>)" (\x y -> x <+> y <-> Coin 1) ^$ extraCol ^$ sumCol)
         , Member (Right colRetAddr) addrUniv
-        , -- This depends on the Coin in the TxOut being (Coin 1). The computation of 'owed' and 'extraCol" should ensure this.
+        , -- This ( collateralReturn) depends on the Coin in the TxOut being (Coin 1).
+          -- The computation of 'owed' and 'extraCol" should ensure this.
           collateralReturn p :<-: (Constr "colReturn" (\ad -> TxOutF p (mkBasicTxOut ad (inject (Coin 1)))) ^$ colRetAddr)
         , -- We compute this, so that we can test that the (Coin 1) invariant holds.
           colRetCoin :<-: (Constr "-" (\sumc extra owe -> (sumc <> extra) <-> owe) ^$ sumCol ^$ extraCol ^$ owed)
@@ -551,6 +584,7 @@ txBodyPreds p =
     tempTx = Var $ V "tempTx" (TxR p) No
     tempTxBody = Var $ V "tempTxBody" (TxBodyR reify) No
     tempWppHash = Var $ V "tempWppHash" (MaybeR ScriptIntegrityHashR) No
+    randomWppHash = Var $ V "randomWppHash" ScriptIntegrityHashR No
     tempBootWits = Var $ V "tempBootWits" (SetR (BootstrapWitnessR @era)) No
     tempKeyWits = Var $ V "tempKeyWits" (SetR (WitVKeyR reify)) No
     langs = Var $ V "langs" (SetR LanguageR) No
@@ -559,6 +593,14 @@ txBodyPreds p =
     refAdjusted = Var $ V "refAdjusted" (SetR ScriptHashR) No
     necessaryHashes = Var $ V "necessaryHashes" (SetR WitHashR) No
     sufficientHashes = Var $ V "sufficientHashes" (SetR WitHashR) No
+    tempSize = Var $ V "tempSize" IntR No
+    realSize = Var $ V "realSize" IntR No
+    tbootSize = Var $ V "tbootSize" IntR No
+    tKeySize = Var $ V "tkeySize" IntR No
+    bootSize = Var $ V "bootSize" IntR No
+    keySize = Var $ V "keySize" IntR No
+    twppSize = Var $ V "twppSize" IntR No
+    wppSize = Var $ V "wppSize" IntR No
 
 txBodyStage ::
   (Reflect era) =>
@@ -704,21 +746,17 @@ gone = do
   slot <- monadTyped (findVar (unVar currentSlot) env)
   (PParamsF _ pp) <- monadTyped (findVar (unVar (pparams proof)) env)
   accntState <- monadTyped (runTarget env accountStateT)
+  utxo1 <- monadTyped (findVar (unVar (utxo proof)) env)
   let lenv = LedgerEnv slot txIx pp accntState
   -- putStrLn (show (pcTx (Babbage Standard) tx))
   pure $ case applySTSByProof proof (TRC (lenv, ledgerstate, tx)) of
     Right ledgerState' -> do
-      -- UTxOState and CertState after applying the transaction $$$
-      putStrLn (show (pcTx (Babbage Standard) tx))
+      -- putStrLn (show (pcTx (Babbage Standard) tx))
       putStrLn "SUCCESS"
     Left errs -> do
-      putStrLn
-        ( show (pcLedgerState proof ledgerstate)
-            ++ "\n\n"
-            ++ show (pcTx proof tx)
-            ++ "\n\n"
-            ++ show (ppList prettyA errs)
-        )
+      putStrLn "FAIL"
+      putStrLn (show (pgenTx proof utxo1 tx))
+      putStrLn (show (ppList prettyA errs))
       goRepl (Babbage Standard) env ""
 
 test :: Maybe Int -> IO ()
@@ -729,29 +767,10 @@ test Nothing = do
   x <- generateWithSeed seed gone
   x
 
+go :: IO ()
+go = sequence_ [print n >> test (Just n) | n <- [0 .. 100]]
+
 -- ========================================
-
-{-
--- | Collect all the reference scripts found in the TxOuts, pointed to by some input.
-refScripts ::
-  forall era.
-  (BabbageEraTxOut era) =>
-  Set (TxIn (EraCrypto era)) ->
-  UTxO era ->
-  Map.Map (ScriptHash (EraCrypto era)) (Script era)
-refScripts ins (UTxO mp) = Map.foldl' accum Map.empty (eval (ins ◁ mp))
-  where
-    accum ans txOut =
-      case txOut ^. referenceScriptTxOutL of
-        SNothing -> ans
-        SJust script -> Map.insert (hashScript @era script) script ans
-
-{-
-      TxOutShelleyToMary ->
-      TxOutAlonzoToAlonzo -> ScriptsNeededF proof (getScriptsNeeded (liftUTxO ut) txbodyV)
-      TxOutBabbageToConway -> ScriptsNeededF proof (getScriptsNeeded (liftUTxO ut) txbodyV)
--}
--}
 
 -- | Starting in the Babbage era, we can adjust the script witnesses by not supplying
 --   those that appear as a reference script in the UTxO resolved 'spending' inputs.
@@ -760,10 +779,57 @@ refScripts ins (UTxO mp) = Map.foldl' accum Map.empty (eval (ins ◁ mp))
 adjustNeededByRefScripts ::
   Proof era ->
   (Set (TxIn (EraCrypto era))) ->
+  (Set (TxIn (EraCrypto era))) ->
   (Map (TxIn (EraCrypto era)) (TxOutF era)) ->
   (Set (ScriptHash (EraCrypto era))) ->
   (Set (ScriptHash (EraCrypto era)))
-adjustNeededByRefScripts proof inps ut neededhashes = case whichTxOut proof of
+adjustNeededByRefScripts proof inps refinps ut neededhashes = case whichTxOut proof of
   TxOutShelleyToMary -> neededhashes
   TxOutAlonzoToAlonzo -> neededhashes
-  TxOutBabbageToConway -> Set.difference neededhashes (Map.keysSet (refScripts inps (liftUTxO ut)))
+  TxOutBabbageToConway ->
+    Set.difference
+      neededhashes
+      ( Set.union
+          (Map.keysSet (refScripts inps (liftUTxO ut)))
+          (Map.keysSet (refScripts refinps (liftUTxO ut)))
+      )
+
+-- ==============================
+
+-- | Pretty print the fields of a Randomly generated TxBody, except resolve the
+--   inputs with the given Ut map.
+pgenTxBodyField ::
+  Reflect era =>
+  Proof era ->
+  Map (TxIn (EraCrypto era)) (TxOutF era) ->
+  TxBodyField era ->
+  [(Text, PDoc)]
+pgenTxBodyField proof ut x = case x of
+  Inputs s -> [(pack "spend inputs", pcUtxoDoc (Map.restrictKeys ut s))]
+  Collateral s -> [(pack "coll inputs", pcUtxoDoc (Map.restrictKeys ut s))]
+  RefInputs s -> [(pack "ref inputs", pcUtxoDoc (Map.restrictKeys ut s))]
+  other -> pcTxBodyField proof other
+
+pgenTxBody :: Reflect era => Proof era -> TxBody era -> Map (TxIn (EraCrypto era)) (TxOutF era) -> PDoc
+pgenTxBody proof txBody ut = ppRecord (pack "TxBody " <> pack (show proof)) pairs
+  where
+    fields = abstractTxBody proof txBody
+    pairs = concatMap (pgenTxBodyField proof ut) fields
+
+pgenTxField ::
+  forall era.
+  Reflect era =>
+  Proof era ->
+  Map (TxIn (EraCrypto era)) (TxOutF era) ->
+  TxField era ->
+  [(Text, PDoc)]
+pgenTxField proof ut x = case x of
+  Body b -> [(pack "txbody hash", ppSafeHash (hashAnnotated b)), (pack "body", pgenTxBody proof b ut)]
+  BodyI xs -> [(pack "body", ppRecord (pack "TxBody") (concat (map (pgenTxBodyField proof ut) xs)))]
+  other -> pcTxField proof x
+
+pgenTx :: Reflect era => Proof era -> Map (TxIn (EraCrypto era)) (TxOutF era) -> Tx era -> PDoc
+pgenTx proof ut tx = ppRecord (pack "Tx") pairs
+  where
+    fields = abstractTx proof tx
+    pairs = concatMap (pgenTxField proof ut) fields

@@ -214,6 +214,8 @@ smallest xs = help Set.empty xs
         then help small1 ys
         else help y ys
 
+-- | Return sufficient KeyHash to make the Timelock succeed. Note that some Timelock
+--   scripts need no KeyHashes to succeed (RequireTimeExpire, RequireTimeStart)
 sufficientTimelock :: Era era => Time.Timelock era -> Set (KeyHash 'Witness (EraCrypto era))
 sufficientTimelock x = case x of
   Time.RequireSignature kh -> Set.singleton kh
