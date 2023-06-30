@@ -1,6 +1,6 @@
 # Version history for `cardano-ledger-conway`
 
-## 1.4.0.1
+## 1.5.0.0
 
 * Add `PParams` for `Conway` #3498
 

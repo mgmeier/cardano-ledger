@@ -80,6 +80,8 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Lens.Micro (Lens', lens)
 import NoThunks.Class (NoThunks)
+import Cardano.Ledger.Conway.Era (ConwayEra)
+import Cardano.Ledger.Conway.PParams ()
 
 data GovernanceAction era
   = ParameterChange !(PParamsUpdate era)
@@ -590,3 +592,7 @@ toConwayGovernancePairs cg@(ConwayGovernance _ _ _) =
       , "ratify" .= cgRatify
       , "voterRoles" .= cgVoterRoles
       ]
+
+instance Crypto c => EraGovernance (ConwayEra c) where
+  type GovernanceState (ConwayEra c) = ConwayGovernance (ConwayEra c)
+

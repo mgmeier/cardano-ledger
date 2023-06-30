@@ -16,7 +16,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 -- | This module contains the type of protocol parameters and EraPParams instance
 module Cardano.Ledger.Conway.PParams (
@@ -27,29 +26,28 @@ module Cardano.Ledger.Conway.PParams (
   encodeLangViews,
   upgradeConwayPParams,
   UpgradeConwayPParams (..),
+  PoolVotingThresholds (..),
+  DRepVotingThresholds (..),
 )
 where
 
 import Cardano.Ledger.Alonzo.PParams (OrdExUnits (..))
 import Cardano.Ledger.Alonzo.Scripts (CostModels, ExUnits (..), Prices (Prices), emptyCostModels)
 import Cardano.Ledger.Babbage (BabbageEra)
-import Cardano.Ledger.Babbage.Core
+import Cardano.Ledger.Babbage.Core hiding (Value)
 import Cardano.Ledger.Babbage.PParams
 import Cardano.Ledger.BaseTypes (EpochNo (EpochNo), NonNegativeInterval, ProtVer (ProtVer), UnitInterval)
 import Cardano.Ledger.Binary
 import Cardano.Ledger.Binary.Coders
 import Cardano.Ledger.Coin (Coin (Coin))
-import Cardano.Ledger.Conway.Core
 import Cardano.Ledger.Conway.Era (ConwayEra)
-import Cardano.Ledger.Conway.Governance (ConwayGovernance)
+import Cardano.Ledger.Conway.Core hiding (Value)
 import Cardano.Ledger.Crypto
 import Cardano.Ledger.HKD (HKD, HKDFunctor (..))
 import Control.DeepSeq (NFData)
 import Data.Aeson hiding (Encoding, decode, encode)
-import qualified Data.Aeson as Aeson
 import Data.Default.Class (Default (def))
 import Data.Functor.Identity (Identity)
-import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..), isSNothing)
 import Data.Proxy
 import GHC.Generics (Generic)
@@ -57,8 +55,15 @@ import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 
--- | Conway Protocol parameters. Ways in which parameters have changed from Babbage:
--- addition of @drepDeposit@
+-- | Conway Protocol parameters. The following parameters have been added since Babbage:
+-- * @poolVotingThresholds@
+-- * @dRepVotingThresholds@
+-- * @minCommitteeSize@
+-- * @committeeTermLimit@
+-- * @govActionExpiration@
+-- * @govActionDeposit@
+-- * @dRepDeposit@
+-- * @dRepActivity@
 data ConwayPParams f era = ConwayPParams
   { cppMinFeeA :: !(HKD f Coin)
   -- ^ The linear factor for the minimum fee calculation
@@ -106,21 +111,23 @@ data ConwayPParams f era = ConwayPParams
   -- including non-native scripts.
   , cppMaxCollateralInputs :: !(HKD f Natural)
   -- ^ Maximum number of collateral inputs allowed in a transaction
-  , cppVotingThresholds :: !(HKD f (Map.Map Natural Natural)) -- New ones for Conway
-
-  -- ^ TODO: Write a description here.
-  , cppMinCCSize :: !(HKD f Natural)
+  -- New ones for Conway
+  , cppPoolVotingThresholds :: !(HKD f PoolVotingThresholds)
+  -- ^ Thresholds for SPO votes
+  , cppDRepVotingThresholds :: !(HKD f DRepVotingThresholds)
+  -- ^ Thresholds for DRep votes
+  , cppMinCommitteeSize :: !(HKD f Natural)
   -- ^ Minimum size of the Constitutional Committee
-  , cppCCTermLimit :: !(HKD f Natural)
+  , cppCommitteeTermLimit :: !(HKD f Natural)
   -- ^ The Constitutional Committee Term limit in number of Slots
-  , cppGovExpiration :: !(HKD f Natural)
+  , cppGovActionExpiration :: !(HKD f Natural)
   -- ^ Governance action expiration in number of Slots
-  , cppGovDeposit :: !(HKD f Coin)
+  , cppGovActionDeposit :: !(HKD f Coin)
   -- ^ The amount of the Governance Action deposit
   , cppDRepDeposit :: !(HKD f Coin)
   -- ^ The amount of a DRep registration deposit
   , cppDRepActivity :: !(HKD f EpochNo)
-  -- ^ The number of Epochs that a DRep can perform no activity without loosing their @Active@ status.
+  -- ^ The number of Epochs that a DRep can perform no activity without losing their @Active@ status.
   }
   deriving (Generic)
 
@@ -145,11 +152,12 @@ instance NoThunks (ConwayPParams StrictMaybe era)
 instance NFData (ConwayPParams StrictMaybe era)
 
 data UpgradeConwayPParams f = UpgradeConwayPParams
-  { ucppVotingThresholds :: !(HKD f (Map.Map Natural Natural))
-  , ucppMinCCSize :: !(HKD f Natural)
-  , ucppCCTermLimit :: !(HKD f Natural)
-  , ucppGovExpiration :: !(HKD f Natural)
-  , ucppGovDeposit :: !(HKD f Coin)
+  { ucppPoolVotingThresholds :: !(HKD f PoolVotingThresholds)
+  , ucppDRepVotingThresholds :: !(HKD f DRepVotingThresholds)
+  , ucppMinCommitteeSize :: !(HKD f Natural)
+  , ucppCommitteeTermLimit :: !(HKD f Natural)
+  , ucppGovActionExpiration :: !(HKD f Natural)
+  , ucppGovActionDeposit :: !(HKD f Coin)
   , ucppDRepDeposit :: !(HKD f Coin)
   , ucppDRepActivity :: !(HKD f EpochNo)
   }
@@ -178,11 +186,12 @@ instance NFData (UpgradeConwayPParams StrictMaybe)
 instance Default (UpgradeConwayPParams Identity) where
   def =
     UpgradeConwayPParams
-      { ucppVotingThresholds = Map.empty
-      , ucppMinCCSize = 0
-      , ucppCCTermLimit = 0
-      , ucppGovExpiration = 0
-      , ucppGovDeposit = Coin 0
+      { ucppPoolVotingThresholds = def
+      , ucppDRepVotingThresholds = def
+      , ucppMinCommitteeSize = 0
+      , ucppCommitteeTermLimit = 0
+      , ucppGovActionExpiration = 0
+      , ucppGovActionDeposit = Coin 0
       , ucppDRepDeposit = Coin 0
       , ucppDRepActivity = EpochNo 0
       }
@@ -190,11 +199,12 @@ instance Default (UpgradeConwayPParams Identity) where
 instance Default (UpgradeConwayPParams StrictMaybe) where
   def =
     UpgradeConwayPParams
-      { ucppVotingThresholds = SNothing
-      , ucppMinCCSize = SNothing
-      , ucppCCTermLimit = SNothing
-      , ucppGovExpiration = SNothing
-      , ucppGovDeposit = SNothing
+      { ucppPoolVotingThresholds = SNothing
+      , ucppDRepVotingThresholds = SNothing
+      , ucppMinCommitteeSize = SNothing
+      , ucppCommitteeTermLimit = SNothing
+      , ucppGovActionExpiration = SNothing
+      , ucppGovActionDeposit = SNothing
       , ucppDRepDeposit = SNothing
       , ucppDRepActivity = SNothing
       }
@@ -252,20 +262,18 @@ instance Crypto c => BabbageEraPParams (ConwayEra c) where
   hkdCoinsPerUTxOByteL = lens cppCoinsPerUTxOByte (\pp x -> pp {cppCoinsPerUTxOByte = x})
 
 instance Crypto c => ConwayEraPParams (ConwayEra c) where
-  hkdVotingThresholdsL = lens cppVotingThresholds (\pp x -> pp {cppVotingThresholds = x})
-  hkdMinCCSizeL = lens cppMinCCSize (\pp x -> pp {cppMinCCSize = x})
-  hkdCCTermLimitL = lens cppCCTermLimit (\pp x -> pp {cppCCTermLimit = x})
-  hkdGovExpirationL = lens cppGovExpiration (\pp x -> pp {cppGovExpiration = x})
-  hkdGovDepositL = lens cppGovDeposit (\pp x -> pp {cppGovDeposit = x})
+  hkdPoolVotingThresholdsL = lens cppPoolVotingThresholds (\pp x -> pp {cppPoolVotingThresholds = x})
+  hkdDRepVotingThresholdsL = lens cppDRepVotingThresholds (\pp x -> pp {cppDRepVotingThresholds = x})
+  hkdMinCommitteeSizeL = lens cppMinCommitteeSize (\pp x -> pp {cppMinCommitteeSize = x})
+  hkdCommitteeTermLimitL = lens cppCommitteeTermLimit (\pp x -> pp {cppCommitteeTermLimit = x})
+  hkdGovActionExpirationL = lens cppGovActionExpiration (\pp x -> pp {cppGovActionExpiration = x})
+  hkdGovActionDepositL = lens cppGovActionDeposit (\pp x -> pp {cppGovActionDeposit = x})
   hkdDRepDepositL = lens cppDRepDeposit (\pp x -> pp {cppDRepDeposit = x})
   hkdDRepActivityL = lens cppDRepActivity (\pp x -> pp {cppDRepActivity = x})
 
-instance Crypto c => EraGovernance (ConwayEra c) where
-  type GovernanceState (ConwayEra c) = ConwayGovernance (ConwayEra c)
-
 instance Era era => EncCBOR (ConwayPParams Identity era) where
   encCBOR ConwayPParams {..} =
-    encodeListLen (29 + listLen cppProtocolVersion)
+    encodeListLen (28 + listLen cppProtocolVersion)
       <> encCBOR cppMinFeeA
       <> encCBOR cppMinFeeB
       <> encCBOR cppMaxBBSize
@@ -289,11 +297,12 @@ instance Era era => EncCBOR (ConwayPParams Identity era) where
       <> encCBOR cppCollateralPercentage
       <> encCBOR cppMaxCollateralInputs
       -- New for Conway
-      <> encCBOR cppVotingThresholds
-      <> encCBOR cppMinCCSize
-      <> encCBOR cppCCTermLimit
-      <> encCBOR cppGovExpiration
-      <> encCBOR cppGovDeposit
+      <> encCBOR cppPoolVotingThresholds
+      <> encCBOR cppDRepVotingThresholds
+      <> encCBOR cppMinCommitteeSize
+      <> encCBOR cppCommitteeTermLimit
+      <> encCBOR cppGovActionExpiration
+      <> encCBOR cppGovActionDeposit
       <> encCBOR cppDRepDeposit
       <> encCBOR cppDRepActivity
 
@@ -302,7 +311,7 @@ instance Era era => ToCBOR (ConwayPParams Identity era) where
 
 instance Era era => DecCBOR (ConwayPParams Identity era) where
   decCBOR =
-    decodeRecordNamed "PParams" (\pp -> 29 + fromIntegral (listLen (cppProtocolVersion pp))) $ do
+    decodeRecordNamed "PParams" (\pp -> 28 + fromIntegral (listLen (cppProtocolVersion pp))) $ do
       cppMinFeeA <- decCBOR
       cppMinFeeB <- decCBOR
       cppMaxBBSize <- decCBOR
@@ -326,11 +335,12 @@ instance Era era => DecCBOR (ConwayPParams Identity era) where
       cppCollateralPercentage <- decCBOR
       cppMaxCollateralInputs <- decCBOR
       -- New for Conway
-      cppVotingThresholds <- decCBOR
-      cppMinCCSize <- decCBOR
-      cppCCTermLimit <- decCBOR
-      cppGovExpiration <- decCBOR
-      cppGovDeposit <- decCBOR
+      cppPoolVotingThresholds <- decCBOR
+      cppDRepVotingThresholds <- decCBOR
+      cppMinCommitteeSize <- decCBOR
+      cppCommitteeTermLimit <- decCBOR
+      cppGovActionExpiration <- decCBOR
+      cppGovActionDeposit <- decCBOR
       cppDRepDeposit <- decCBOR
       cppDRepActivity <- decCBOR
       pure ConwayPParams {..}
@@ -377,11 +387,12 @@ emptyConwayPParams =
     , cppCollateralPercentage = 150
     , cppMaxCollateralInputs = 5
     , -- New in Conway
-      cppVotingThresholds = Map.empty
-    , cppMinCCSize = 0
-    , cppCCTermLimit = 0
-    , cppGovExpiration = 0
-    , cppGovDeposit = Coin 0
+      cppPoolVotingThresholds = def
+    , cppDRepVotingThresholds = def
+    , cppMinCommitteeSize = 0
+    , cppCommitteeTermLimit = 0
+    , cppGovActionExpiration = 0
+    , cppGovActionDeposit = Coin 0
     , cppDRepDeposit = Coin 0
     , cppDRepActivity = EpochNo 0
     }
@@ -412,11 +423,12 @@ emptyConwayPParamsUpdate =
     , cppCollateralPercentage = SNothing
     , cppMaxCollateralInputs = SNothing
     , -- New for Conway
-      cppVotingThresholds = SNothing
-    , cppMinCCSize = SNothing
-    , cppCCTermLimit = SNothing
-    , cppGovExpiration = SNothing
-    , cppGovDeposit = SNothing
+      cppPoolVotingThresholds = SNothing
+    , cppDRepVotingThresholds = SNothing
+    , cppMinCommitteeSize = SNothing
+    , cppCommitteeTermLimit = SNothing
+    , cppGovActionExpiration = SNothing
+    , cppGovActionDeposit = SNothing
     , cppDRepDeposit = SNothing
     , cppDRepActivity = SNothing
     }
@@ -449,11 +461,12 @@ encodePParamsUpdate ppup =
     !> omitStrictMaybe 23 (cppCollateralPercentage ppup) encCBOR
     !> omitStrictMaybe 24 (cppMaxCollateralInputs ppup) encCBOR
     -- New for Conway
-    !> omitStrictMaybe 25 (cppVotingThresholds ppup) encCBOR
-    !> omitStrictMaybe 26 (cppMinCCSize ppup) encCBOR
-    !> omitStrictMaybe 27 (cppCCTermLimit ppup) encCBOR
-    !> omitStrictMaybe 28 (cppGovExpiration ppup) encCBOR
-    !> omitStrictMaybe 29 (cppGovDeposit ppup) encCBOR
+    !> omitStrictMaybe 25 (cppPoolVotingThresholds ppup) encCBOR
+    !> omitStrictMaybe 25 (cppDRepVotingThresholds ppup) encCBOR
+    !> omitStrictMaybe 26 (cppMinCommitteeSize ppup) encCBOR
+    !> omitStrictMaybe 27 (cppCommitteeTermLimit ppup) encCBOR
+    !> omitStrictMaybe 28 (cppGovActionExpiration ppup) encCBOR
+    !> omitStrictMaybe 29 (cppGovActionDeposit ppup) encCBOR
     !> omitStrictMaybe 30 (cppDRepDeposit ppup) encCBOR
     !> omitStrictMaybe 31 (cppDRepActivity ppup) encCBOR
   where
@@ -493,13 +506,14 @@ updateField = \case
   23 -> field (\x up -> up {cppCollateralPercentage = SJust x}) From
   24 -> field (\x up -> up {cppMaxCollateralInputs = SJust x}) From
   -- New for Conway
-  25 -> field (\x up -> up {cppVotingThresholds = SJust x}) From
-  26 -> field (\x up -> up {cppMinCCSize = SJust x}) From
-  27 -> field (\x up -> up {cppCCTermLimit = SJust x}) From
-  28 -> field (\x up -> up {cppGovExpiration = SJust x}) From
-  29 -> field (\x up -> up {cppGovDeposit = SJust x}) From
-  30 -> field (\x up -> up {cppDRepDeposit = SJust x}) From
-  31 -> field (\x up -> up {cppDRepActivity = SJust x}) From
+  25 -> field (\x up -> up {cppPoolVotingThresholds = SJust x}) From
+  26 -> field (\x up -> up {cppDRepVotingThresholds = SJust x}) From
+  27 -> field (\x up -> up {cppMinCommitteeSize = SJust x}) From
+  28 -> field (\x up -> up {cppCommitteeTermLimit = SJust x}) From
+  29 -> field (\x up -> up {cppGovActionExpiration = SJust x}) From
+  30 -> field (\x up -> up {cppGovActionDeposit = SJust x}) From
+  31 -> field (\x up -> up {cppDRepDeposit = SJust x}) From
+  32 -> field (\x up -> up {cppDRepActivity = SJust x}) From
   k -> field (\_x up -> up) (Invalid k)
 
 instance Era era => DecCBOR (ConwayPParams StrictMaybe era) where
@@ -536,7 +550,7 @@ conwayPParamsHKDPairs ::
   (ConwayEraPParams era, HKDFunctor f) =>
   Proxy f ->
   PParamsHKD f era ->
-  [(Key, HKD f Aeson.Value)]
+  [(Key, HKD f Value)]
 conwayPParamsHKDPairs px pp = babbagePParamsHKDPairs px pp <> conwayUpgradePParamsHKDPairs px pp
 
 conwayUpgradePParamsHKDPairs ::
@@ -544,13 +558,14 @@ conwayUpgradePParamsHKDPairs ::
   (ConwayEraPParams era, HKDFunctor f) =>
   Proxy f ->
   PParamsHKD f era ->
-  [(Key, HKD f Aeson.Value)]
+  [(Key, HKD f Value)]
 conwayUpgradePParamsHKDPairs px pp =
-  [ ("votingThresholds", hkdMap px (toJSON @(Map.Map Natural Natural)) (pp ^. hkdVotingThresholdsL @era @f))
-  , ("minCCSize", hkdMap px (toJSON @Natural) (pp ^. hkdMinCCSizeL @era @f))
-  , ("cCTermLimit", hkdMap px (toJSON @Natural) (pp ^. hkdCCTermLimitL @era @f))
-  , ("govExpiration", hkdMap px (toJSON @Natural) (pp ^. hkdGovExpirationL @era @f))
-  , ("govDeposit", hkdMap px (toJSON @Coin) (pp ^. hkdGovDepositL @era @f))
+  [ ("poolVotingThresholds", hkdMap px (toJSON @PoolVotingThresholds) (pp ^. hkdPoolVotingThresholdsL @era @f))
+  , ("dRepVotingThresholds", hkdMap px (toJSON @DRepVotingThresholds) (pp ^. hkdDRepVotingThresholdsL @era @f))
+  , ("minCommitteeSize", hkdMap px (toJSON @Natural) (pp ^. hkdMinCommitteeSizeL @era @f))
+  , ("committeeTermLimit", hkdMap px (toJSON @Natural) (pp ^. hkdCommitteeTermLimitL @era @f))
+  , ("govActionExpiration", hkdMap px (toJSON @Natural) (pp ^. hkdGovActionExpirationL @era @f))
+  , ("govActionDeposit", hkdMap px (toJSON @Coin) (pp ^. hkdGovActionDepositL @era @f))
   , ("dRepDeposit", hkdMap px (toJSON @Coin) (pp ^. hkdDRepDepositL @era @f))
   , ("dRepActivity", hkdMap px (toJSON @EpochNo) (pp ^. hkdDRepActivityL @era @f))
   ]
@@ -585,11 +600,12 @@ upgradeConwayPParams UpgradeConwayPParams {..} BabbagePParams {..} =
     , cppCollateralPercentage = bppCollateralPercentage
     , cppMaxCollateralInputs = bppMaxCollateralInputs
     , -- New for Conway
-      cppVotingThresholds = ucppVotingThresholds
-    , cppMinCCSize = ucppMinCCSize
-    , cppCCTermLimit = ucppCCTermLimit
-    , cppGovExpiration = ucppGovExpiration
-    , cppGovDeposit = ucppGovDeposit
+      cppPoolVotingThresholds = ucppPoolVotingThresholds
+    , cppDRepVotingThresholds = ucppDRepVotingThresholds
+    , cppMinCommitteeSize = ucppMinCommitteeSize
+    , cppCommitteeTermLimit = ucppCommitteeTermLimit
+    , cppGovActionExpiration = ucppGovActionExpiration
+    , cppGovActionDeposit = ucppGovActionDeposit
     , cppDRepDeposit = ucppDRepDeposit
     , cppDRepActivity = ucppDRepActivity
     }
