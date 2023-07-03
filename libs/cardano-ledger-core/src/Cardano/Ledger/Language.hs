@@ -156,6 +156,13 @@ toSLanguage lang
     thisLanguage :: SLanguage l
     thisLanguage = isLanguage
 
+withSLanguage :: Language -> (forall l. IsLanguage l => SLanguage l -> a) -> a
+withSLanguage l f =
+  case l of
+    PlutusV1 -> f SPlutusV1
+    PlutusV2 -> f SPlutusV2
+    PlutusV3 -> f SPlutusV3
+
 -- | Prevent decoding a version of Plutus until
 -- the appropriate protocol version.
 guardPlutus :: Language -> Decoder s ()

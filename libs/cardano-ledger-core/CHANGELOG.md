@@ -12,6 +12,7 @@
   * `dRepUView`
   * `dRepMap`
   * `unify`
+* Added `withSLanguage`
 
 ## 1.3.1.0
 
