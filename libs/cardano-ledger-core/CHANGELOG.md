@@ -13,7 +13,9 @@
   * `dRepMap`
   * `unify`
 * Added `withSLanguage`
-* Move `BinaryPlutus` from `cardano-ledger-alonzo`
+* Move `BinaryPlutus` from `cardano-ledger-alonzo` and changed its `Show` instance to
+  display base64 encoding.
+* Added `Plutus`
 
 ## 1.3.1.0
 

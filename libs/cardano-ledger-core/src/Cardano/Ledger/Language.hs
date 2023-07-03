@@ -18,6 +18,7 @@
 --     versions of old languages) will be added here.
 module Cardano.Ledger.Language (
   -- * Plutus Script
+  Plutus (..),
   BinaryPlutus (..),
 
   -- * Value level Plutus Language version
@@ -41,13 +42,16 @@ import Cardano.Ledger.Binary (
   DecCBOR (..),
   Decoder,
   EncCBOR (..),
+  FromCBOR,
+  ToCBOR,
   decodeEnumBounded,
   encodeEnum,
   natVersion,
   unlessDecoderVersionAtLeast,
  )
+import Cardano.Ledger.SafeHash (SafeToHash (..))
 import Cardano.Ledger.TreeDiff (ToExpr (..))
-import Control.DeepSeq (NFData (..))
+import Control.DeepSeq (NFData (..), rwhnf)
 import Data.Aeson (
   FromJSON (parseJSON),
   FromJSONKey (fromJSONKey),
@@ -58,20 +62,39 @@ import Data.Aeson (
   withText,
  )
 import Data.Aeson.Types (toJSONKeyText)
-import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Base64 as B64 (encode)
+import Data.ByteString.Short (ShortByteString, fromShort)
 import Data.Ix (Ix)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 
+data Plutus = Plutus
+  { plutusLanguage :: !Language
+  , plutusScript :: !BinaryPlutus
+  }
+  deriving stock (Eq, Show, Generic)
+
+-- | Already in Normal Form
+instance NFData Plutus where
+  rnf = rwhnf
+
+instance NoThunks Plutus
+
 -- | Binary representation of a Plutus script.
 newtype BinaryPlutus = BinaryPlutus {unBinaryPlutus :: ShortByteString}
-  deriving stock (Eq, Show)
-  deriving newtype (EncCBOR, DecCBOR, NFData)
+  deriving stock (Eq, Generic)
+  deriving newtype (ToCBOR, FromCBOR, EncCBOR, DecCBOR, NFData, NoThunks)
+
+instance Show BinaryPlutus where
+  show = show . B64.encode . fromShort . unBinaryPlutus
 
 instance DecCBOR (Annotator BinaryPlutus) where
   decCBOR = pure <$> decCBOR
+
+instance SafeToHash BinaryPlutus where
+  originalBytes (BinaryPlutus binaryBlutus) = fromShort binaryBlutus
 
 -- | Non-Native Script language. This is an Enumerated type.
 -- This is expected to be an open type. We will add new Constuctors
