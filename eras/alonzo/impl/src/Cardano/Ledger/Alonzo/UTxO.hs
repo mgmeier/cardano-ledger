@@ -41,6 +41,7 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import Lens.Micro
 import Lens.Micro.Extras (view)
+import Cardano.Ledger.Shelley.UTxO (getShelleyProducedValue)
 
 -- | Alonzo era style scripts needed require also a `ScriptPurpose`, not only the `ScriptHash`
 newtype AlonzoScriptsNeeded era
@@ -54,6 +55,8 @@ instance Crypto c => EraUTxO (AlonzoEra c) where
   type ScriptsNeeded (AlonzoEra c) = AlonzoScriptsNeeded (AlonzoEra c)
 
   getConsumedValue = getConsumedMaryValue
+
+  getProducedValue = getShelleyProducedValue
 
   getScriptsNeeded = getAlonzoScriptsNeeded
 

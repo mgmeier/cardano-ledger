@@ -7,7 +7,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -55,7 +54,7 @@ import Cardano.Ledger.Keys (
   DSignable,
   Hash,
   KeyRole (..),
-  verifySignedDSIGN,
+  verifySignedDSIGN, KeyHash,
  )
 import Cardano.Ledger.Keys.WitVKey (WitVKey (..))
 import Cardano.Ledger.TreeDiff (ToExpr)
@@ -211,6 +210,13 @@ class EraTxBody era => EraUTxO era where
     -- | Function that can lookup current delegation deposits
     (StakeCredential (EraCrypto era) -> Maybe Coin) ->
     UTxO era ->
+    TxBody era ->
+    Value era
+
+  getProducedValue ::
+    PParams era ->
+    -- | Check whether a pool with a supplied PoolStakeId is already registered.
+    (KeyHash 'StakePool (EraCrypto era) -> Bool) ->
     TxBody era ->
     Value era
 

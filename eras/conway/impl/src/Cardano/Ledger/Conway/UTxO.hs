@@ -3,6 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE DataKinds #-}
 
 module Cardano.Ledger.Conway.UTxO () where
 
@@ -11,7 +12,8 @@ import Cardano.Ledger.Alonzo.UTxO (
   getAlonzoScriptsHashesNeeded,
   getAlonzoScriptsNeeded,
  )
-import Cardano.Ledger.Conway.Core (ConwayEraTxBody (..), EraTxBody (..))
+import Cardano.Ledger.Conway.Core (ConwayEraTxBody (..)
+  , EraTxBody (..), PParams, Era (..), Value)
 import Cardano.Ledger.Conway.Era (ConwayEra)
 import Cardano.Ledger.Conway.Governance (VotingProcedure (..))
 import Cardano.Ledger.Conway.TxBody ()
@@ -22,6 +24,18 @@ import Cardano.Ledger.UTxO (EraUTxO (..), UTxO)
 import Data.Foldable (Foldable (..))
 import Data.Maybe (mapMaybe)
 import Lens.Micro ((^.))
+import Cardano.Ledger.Keys (KeyRole(..), KeyHash)
+import Cardano.Ledger.Shelley.UTxO (getShelleyProducedValue)
+
+getConwayProducedValue ::
+  Crypto c =>
+  PParams (ConwayEra c) ->
+  (KeyHash 'StakePool (EraCrypto (ConwayEra c)) -> Bool) ->
+  TxBody (ConwayEra c) ->
+  Value (ConwayEra c)
+getConwayProducedValue pp poolReg txb =
+  getShelleyProducedValue pp poolReg txb
+  <> undefined
 
 getConwayScriptsNeeded ::
   ConwayEraTxBody era =>
@@ -42,6 +56,8 @@ instance Crypto c => EraUTxO (ConwayEra c) where
   type ScriptsNeeded (ConwayEra c) = AlonzoScriptsNeeded (ConwayEra c)
 
   getConsumedValue = getConsumedMaryValue
+
+  getProducedValue = getConwayProducedValue
 
   getScriptsNeeded = getConwayScriptsNeeded
 

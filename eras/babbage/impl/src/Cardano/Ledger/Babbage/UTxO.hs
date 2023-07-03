@@ -15,11 +15,14 @@ import Cardano.Ledger.Babbage.TxBody ()
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.Mary.UTxO (getConsumedMaryValue)
 import Cardano.Ledger.UTxO (EraUTxO (..))
+import Cardano.Ledger.Shelley.UTxO (getShelleyProducedValue)
 
 instance Crypto c => EraUTxO (BabbageEra c) where
   type ScriptsNeeded (BabbageEra c) = AlonzoScriptsNeeded (BabbageEra c)
 
   getConsumedValue = getConsumedMaryValue
+
+  getProducedValue = getShelleyProducedValue
 
   getScriptsNeeded = getAlonzoScriptsNeeded
 
