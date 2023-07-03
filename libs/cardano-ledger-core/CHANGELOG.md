@@ -13,6 +13,7 @@
   * `dRepMap`
   * `unify`
 * Added `withSLanguage`
+* Move `BinaryPlutus` from `cardano-ledger-alonzo`
 
 ## 1.3.1.0
 

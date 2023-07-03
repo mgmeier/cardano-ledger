@@ -1,8 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -14,9 +16,28 @@
 -- | This module provides data structures and operations for talking about
 --     Non-native Script languages. It is expected that new languages (or new
 --     versions of old languages) will be added here.
-module Cardano.Ledger.Language where
+module Cardano.Ledger.Language (
+  -- * Plutus Script
+  BinaryPlutus (..),
+
+  -- * Value level Plutus Language version
+  Language (..),
+  mkLanguageEnum,
+  languageToText,
+  languageFromText,
+  nonNativeLanguages,
+  guardPlutus,
+
+  -- * Type level Plutus Language version
+  SLanguage (..),
+  IsLanguage (..),
+  fromSLanguage,
+  toSLanguage,
+  withSLanguage,
+) where
 
 import Cardano.Ledger.Binary (
+  Annotator,
   DecCBOR (..),
   Decoder,
   EncCBOR (..),
@@ -37,11 +58,20 @@ import Data.Aeson (
   withText,
  )
 import Data.Aeson.Types (toJSONKeyText)
+import Data.ByteString.Short (ShortByteString)
 import Data.Ix (Ix)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+
+-- | Binary representation of a Plutus script.
+newtype BinaryPlutus = BinaryPlutus {unBinaryPlutus :: ShortByteString}
+  deriving stock (Eq, Show)
+  deriving newtype (EncCBOR, DecCBOR, NFData)
+
+instance DecCBOR (Annotator BinaryPlutus) where
+  decCBOR = pure <$> decCBOR
 
 -- | Non-Native Script language. This is an Enumerated type.
 -- This is expected to be an open type. We will add new Constuctors

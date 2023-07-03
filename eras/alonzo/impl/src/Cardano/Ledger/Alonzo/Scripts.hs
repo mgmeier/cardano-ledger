@@ -56,7 +56,12 @@ where
 
 import Cardano.Ledger.Allegra.Scripts (Timelock, eqTimelockRaw)
 import Cardano.Ledger.Alonzo.Era (AlonzoEra)
-import Cardano.Ledger.Alonzo.Language (Language (..), guardPlutus, nonNativeLanguages)
+import Cardano.Ledger.Alonzo.Language (
+  BinaryPlutus (..),
+  Language (..),
+  guardPlutus,
+  nonNativeLanguages,
+ )
 import Cardano.Ledger.BaseTypes (
   BoundedRational (unboundRational),
   NonNegativeInterval,
@@ -160,14 +165,6 @@ instance NFData Tag where
   rnf = rwhnf
 
 -- =======================================================
-
--- | Binary representation of a Plutus script.
-newtype BinaryPlutus = BinaryPlutus {unBinaryPlutus :: ShortByteString}
-  deriving stock (Eq, Show)
-  deriving newtype (EncCBOR, DecCBOR, NFData)
-
-instance DecCBOR (Annotator BinaryPlutus) where
-  decCBOR = pure <$> decCBOR
 
 -- | Scripts in the Alonzo Era, Either a Timelock script or a Plutus script.
 data AlonzoScript era
