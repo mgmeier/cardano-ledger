@@ -17,12 +17,14 @@ module Cardano.Ledger.Alonzo.PlutusScriptApi (
   getSpendingTxIn,
   getDatumAlonzo,
   evalScripts,
+  evalPlutusScripts,
   -- Figure 12
   scriptsNeeded,
   scriptsNeededFromBody,
   language,
   CollectError (..),
   collectTwoPhaseScriptInputs,
+  collectPlutusScripts,
   knownToNotBe1Phase,
 )
 where
@@ -161,6 +163,7 @@ collectTwoPhaseScriptInputs ei sysS pp tx utxo =
   where
     unwrap (Plutus lang (BinaryPlutus scriptBytes), args, exUnits, costModel) =
       (scriptBytes, lang, args, exUnits, costModel)
+{-# DEPRECATED collectTwoPhaseScriptInputs "In favor of `collectPlutusScripts`" #-}
 
 collectPlutusScripts ::
   forall era.
