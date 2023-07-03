@@ -28,7 +28,7 @@ module Cardano.Ledger.Alonzo.PlutusScriptApi (
 where
 
 import Cardano.Ledger.Alonzo.Core hiding (TranslationError)
-import Cardano.Ledger.Alonzo.Language (Language (..))
+import Cardano.Ledger.Alonzo.Language (Language (..), Plutus (..))
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..), CostModel, CostModels (..), ExUnits (..))
 import Cardano.Ledger.Alonzo.Scripts.Data (getPlutusData)
 import Cardano.Ledger.Alonzo.Tx (Data, ScriptPurpose (..), indexedRdmrs)
@@ -37,7 +37,7 @@ import Cardano.Ledger.Alonzo.TxInfo (
   ExtendedUTxO (..),
   ScriptResult (..),
   TranslationError (..),
-  runPLCScript,
+  runPlutusScript,
   valContext,
  )
 import Cardano.Ledger.Alonzo.TxWits (AlonzoEraTxWits (..), unTxDats)
@@ -127,10 +127,10 @@ instance (Era era, DecCBOR (TxCert era)) => DecCBOR (CollectError era) where
 knownToNotBe1Phase ::
   Map.Map (ScriptHash (EraCrypto era)) (AlonzoScript era) ->
   (ScriptPurpose era, ScriptHash (EraCrypto era)) ->
-  Maybe (ScriptPurpose era, Language, ShortByteString)
+  Maybe (ScriptPurpose era, Plutus)
 knownToNotBe1Phase scriptsAvailable (sp, sh) = do
-  PlutusScript lang script <- sh `Map.lookup` scriptsAvailable
-  Just (sp, lang, script)
+  plutus <- sh `Map.lookup` scriptsAvailable
+  Just (sp, plutus)
 
 -- | Collect the inputs for twophase scripts. If any script can't find ist data return
 --     a list of CollectError, if all goes well return a list of quadruples with the inputs.
@@ -157,7 +157,7 @@ collectTwoPhaseScriptInputs ::
   UTxO era ->
   Either [CollectError era] [(ShortByteString, Language, [Data era], ExUnits, CostModel)]
 collectTwoPhaseScriptInputs ei sysS pp tx utxo =
-  let usedLanguages = Set.fromList [lang | (_, lang, _) <- neededAndConfirmedToBePlutus]
+  let usedLanguages = Set.fromList [lang | (_, Plutus lang _) <- neededAndConfirmedToBePlutus]
       costModels = costModelsValid $ pp ^. ppCostModelsL
       missingCMs = Set.filter (`Map.notMember` costModels) usedLanguages
    in case Set.lookupMin missingCMs of
@@ -174,11 +174,11 @@ collectTwoPhaseScriptInputs ei sysS pp tx utxo =
     AlonzoScriptsNeeded scriptsNeeded' = getScriptsNeeded utxo (tx ^. bodyTxL)
     neededAndConfirmedToBePlutus =
       mapMaybe (knownToNotBe1Phase scriptsAvailable) scriptsNeeded'
-    redeemer (sp, lang, _) =
+    redeemer (sp, Plutus lang _) =
       case indexedRdmrs tx sp of
         Just (d, eu) -> Right (lang, sp, d, eu)
         Nothing -> Left (NoRedeemer sp)
-    getscript (_, _, script) = script
+    getscript (_, Plutus _ script) = script
     apply costs (lang, sp, d, eu) script =
       case txinfo lang of
         Right inf ->
@@ -204,7 +204,7 @@ merge f (x : xs) (y : ys) zs = merge f xs ys (gg x y zs)
     gg (Left a) _ (Left cs) = Left (a : cs)
 
 language :: AlonzoScript era -> Maybe Language
-language (PlutusScript lang _) = Just lang
+language (PlutusScript (Plutus lang _)) = Just lang
 language (TimelockScript _) = Nothing
 
 -- | evaluate a list of scripts, All scripts in the list must be True.
@@ -215,17 +215,17 @@ evalScripts ::
   (EraTx era, Script era ~ AlonzoScript era) =>
   ProtVer ->
   Tx era ->
-  [(ShortByteString, Language, [Data era], ExUnits, CostModel)] ->
+  [(Plutus, [Data era], ExUnits, CostModel)] ->
   ScriptResult
 evalScripts _pv _tx [] = mempty
-evalScripts pv tx ((pscript, lang, ds, units, cost) : rest) =
+evalScripts pv tx ((plutus, ds, units, cost) : rest) =
   let beginMsg =
         intercalate
           ","
           [ "[LEDGER][PLUTUS_SCRIPT]"
           , "BEGIN"
           ]
-      !res = traceEvent beginMsg $ runPLCScript (Proxy @era) pv lang cost pscript units (map getPlutusData ds)
+      !res = traceEvent beginMsg $ runPlutusScript (Proxy @era) pv plutus cost units (map getPlutusData ds)
       endMsg =
         intercalate
           ","

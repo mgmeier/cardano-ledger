@@ -68,6 +68,7 @@ module Cardano.Ledger.Alonzo.TxInfo (
   unTxCertV2,
   unTxCertV3,
   debugPlutus,
+  runPlutusScript,
   runPLCScript,
   explainPlutusFailure,
   languages,
@@ -126,7 +127,15 @@ import Cardano.Ledger.Credential (
  )
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.Keys (KeyHash (..), hashKey)
-import Cardano.Ledger.Language (IsLanguage (..), Language (..), SLanguage (..), fromSLanguage)
+import Cardano.Ledger.Language (
+  BinaryPlutus (..),
+  IsLanguage (..),
+  Language (..),
+  Plutus (..),
+  SLanguage (..),
+  fromSLanguage,
+  withSLanguage,
+ )
 import Cardano.Ledger.Mary.Value (AssetName (..), MaryValue (..), MultiAsset (..), PolicyID (..))
 import Cardano.Ledger.SafeHash (SafeHash, extractHash, hashAnnotated)
 import qualified Cardano.Ledger.Shelley.HardForks as HardForks
@@ -770,24 +779,37 @@ runPLCScript ::
   ExUnits ->
   [PV1.Data] ->
   ScriptResult
-runPLCScript proxy pv lang cm scriptbytestring units ds =
-  case plutusInterpreter
-    lang
-    PV1.Quiet
-    (getEvaluationContext cm)
-    (transExUnits units)
-    scriptbytestring
-    ds of
-    (_, Left e) -> explainPlutusFailure proxy pv lang scriptbytestring e ds cm units
+runPLCScript proxy pv lang cm scriptBytes =
+  runPlutusScript proxy pv (Plutus lang (BinaryPlutus scriptBytes)) cm
+{-# DEPRECATED runPLCScript "In favor of `runPlutusScript`" #-}
+
+runPlutusScript ::
+  forall era.
+  Show (AlonzoScript era) =>
+  Proxy era ->
+  ProtVer ->
+  Plutus ->
+  CostModel ->
+  ExUnits ->
+  [PV1.Data] ->
+  ScriptResult
+runPlutusScript proxy pv (Plutus lang (BinaryPlutus scriptBytes)) cm units ds =
+  case interpretedScript of
+    (_, Left e) -> explainPlutusFailure proxy pv lang scriptBytes e ds cm units
     (_, Right _) ->
-      scriptPass $ case lang of
-        PlutusV1 ->
-          PlutusDebug $ PlutusDebugLang SPlutusV1 cm units scriptbytestring (PlutusData ds) pv
-        PlutusV2 ->
-          PlutusDebug $ PlutusDebugLang SPlutusV2 cm units scriptbytestring (PlutusData ds) pv
-        PlutusV3 ->
-          PlutusDebug $ PlutusDebugLang SPlutusV3 cm units scriptbytestring (PlutusData ds) pv
+      withSLanguage lang $ \slang ->
+        scriptPass $
+          PlutusDebug $
+            PlutusDebugLang slang cm units scriptBytes (PlutusData ds) pv
   where
+    interpretedScript =
+      plutusInterpreter
+        lang
+        PV1.Quiet
+        (getEvaluationContext cm)
+        (transExUnits units)
+        scriptBytes
+        ds
     plutusPV = transProtocolVersion pv
     plutusInterpreter PlutusV1 = PV1.evaluateScriptRestricting plutusPV
     plutusInterpreter PlutusV2 = PV2.evaluateScriptRestricting plutusPV
@@ -816,7 +838,7 @@ explainPlutusFailure ::
   ScriptResult
 explainPlutusFailure _proxy pv lang scriptbytestring e ds cm eu =
   let ss :: AlonzoScript era
-      ss = PlutusScript lang scriptbytestring
+      ss = PlutusScript (Plutus lang (BinaryPlutus scriptbytestring))
       name :: String
       name = show ss
       firstLine = "\nThe " ++ show lang ++ " script (" ++ name ++ ") fails."
@@ -885,4 +907,4 @@ languages tx utxo sNeeded = Map.foldl' accum Set.empty allscripts
   where
     allscripts = Map.restrictKeys (txscripts @era utxo tx) sNeeded
     accum ans (TimelockScript _) = ans
-    accum ans (PlutusScript l _) = Set.insert l ans
+    accum ans (PlutusScript (Plutus l _)) = Set.insert l ans
