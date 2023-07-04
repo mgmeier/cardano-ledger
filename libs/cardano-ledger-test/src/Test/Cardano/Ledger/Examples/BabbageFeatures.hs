@@ -14,7 +14,16 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Test.Cardano.Ledger.Examples.BabbageFeatures where
+module Test.Cardano.Ledger.Examples.BabbageFeatures (
+  InOut,
+  TestCaseData (..),
+  InitOutputs (..),
+  InitUtxo (..),
+  KeyPairRole (..),
+  txFromTestCaseData,
+  utxoFromTestCaseData,
+  babbageFeatures,
+) where
 
 import qualified Cardano.Crypto.Hash as CH
 import Cardano.Ledger.Address (Addr (..))
@@ -42,6 +51,7 @@ import Cardano.Ledger.Babbage.TxBody (
 import Cardano.Ledger.BaseTypes (
   Network (..),
   StrictMaybe (..),
+  mkTxIx,
   mkTxIxPartial,
   natVersion,
  )
@@ -1047,6 +1057,7 @@ data InitUtxo era = InitUtxo
 data KeyPairRole era
   = KeyPairPayment (KeyPair 'Payment (EraCrypto era))
   | KeyPairWitness (KeyPair 'Witness (EraCrypto era))
+  | KeyPairStakePool (KeyPair 'StakePool (EraCrypto era))
 
 initUtxoFromTestCaseData ::
   BabbageEraTxBody era =>
@@ -1065,6 +1076,28 @@ initUtxoFromTestCaseData
         collateral' = Set.toList collateralIns `zip` ofCollateral'
      in InitUtxo inputs' refInputs' collateral'
 
+utxoFromTestCaseData ::
+  forall era.
+  (BabbageEraTxBody era) =>
+  Proof era ->
+  TestCaseData era ->
+  (UTxO era, UTxO era)
+utxoFromTestCaseData pf (TestCaseData txBody' (InitOutputs ofInputs' ofRefInputs' ofCollateral') _ _) =
+  let inputsIns = getInputs pf txBody'
+      refInputsIns = txBody' ^. referenceInputsTxBodyL
+      collateralIns = txBody' ^. collateralInputsTxBodyL
+
+      inputs' = Set.toList inputsIns `zip` ofInputs'
+      refInputs' = Set.toList refInputsIns `zip` ofRefInputs'
+      collateral' = Set.toList collateralIns `zip` ofCollateral'
+
+      newTxIns = fmap (\x -> (TxIn (txid txBody') (mkTxIx x))) [0 ..] :: [TxIn (EraCrypto era)]
+      newTxInOuts = newTxIns `zip` (foldr (:) [] (getOutputs pf txBody'))
+
+      initUtxo = (UTxO . Map.fromList) $ inputs' ++ refInputs' ++ collateral'
+      expectedUtxo = UTxO $ Map.fromList (newTxInOuts ++ refInputs' ++ collateral')
+   in (initUtxo, expectedUtxo)
+
 txFromTestCaseData ::
   forall era.
   ( Scriptic era
@@ -1082,6 +1115,7 @@ txFromTestCaseData
             ( \case
                 KeyPairPayment p -> mkWitnessVKey (hashAnnotated (txBody testCaseData)) p
                 KeyPairWitness w -> mkWitnessVKey (hashAnnotated (txBody testCaseData)) w
+                KeyPairStakePool s -> mkWitnessVKey (hashAnnotated (txBody testCaseData)) s
             )
             (keysForAddrWits testCaseData)
         tx =
