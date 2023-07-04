@@ -18,6 +18,7 @@
 * Added instance for `Embed (ConwayRATIFY era) (ConwayEPOCH era)`
 * Removed instance for `Embed (ConwayRATIFY era) (ConwayNEWEPOCH era)`
 * Changed superclasses of `STS (ConwayEPOCH era)` and `STS (ConwayNEWEPOCH era)`
+* Removal of `GovernanceProcedure` in favor of `GovernanceProcedures`
 
 ## 1.4.0.0
 
