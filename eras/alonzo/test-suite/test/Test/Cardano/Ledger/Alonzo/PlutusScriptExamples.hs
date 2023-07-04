@@ -4,7 +4,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
@@ -14,13 +13,13 @@ module Test.Cardano.Ledger.Alonzo.PlutusScriptExamples (
 where
 
 import Cardano.Ledger.Alonzo (Alonzo)
-import Cardano.Ledger.Alonzo.Language (Language (..))
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript (..), ExUnits (..))
 import Cardano.Ledger.Alonzo.TxInfo (
   ScriptResult (Fails, Passes),
-  runPLCScript,
+  runPlutusScript,
  )
 import Cardano.Ledger.BaseTypes (ProtVer (..), natVersion)
+import Cardano.Ledger.Language (BinaryPlutus (..), Language (..), Plutus (..))
 import Data.ByteString.Short (ShortByteString)
 import Data.Proxy (Proxy (..))
 import PlutusLedgerApi.Test.EvaluationContext
@@ -73,7 +72,7 @@ directPlutusTest expectation script ds =
 getRawPlutusScript :: String -> AlonzoScript () -> ShortByteString
 getRawPlutusScript name =
   \case
-    PlutusScript _ sbs -> sbs
+    PlutusScript (Plutus _ (BinaryPlutus sbs)) -> sbs
     _ -> error $ "Should not happen '" ++ name ++ "' is a plutus script"
 
 -- | Expects 3 args (data, redeemer, context)
@@ -185,14 +184,13 @@ alonzo :: Proxy Alonzo
 alonzo = Proxy
 
 explainTest :: AlonzoScript Alonzo -> ShouldSucceed -> [PV1.Data] -> Assertion
-explainTest script@(PlutusScript _ bytes) mode ds =
+explainTest script@(PlutusScript plutus) mode ds =
   case ( mode
-       , runPLCScript
+       , runPlutusScript
           alonzo
           (ProtVer (natVersion @6) 0)
-          PlutusV1
+          (plutus {plutusLanguage = PlutusV1})
           testingCostModelV1
-          bytes
           (ExUnits 100000000 10000000)
           ds
        ) of

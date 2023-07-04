@@ -39,7 +39,7 @@ import Cardano.Ledger.Alonzo.PParams
 import Cardano.Ledger.Alonzo.PlutusScriptApi (
   CollectError (..),
   collectPlutusScripts,
-  evalPlutusScripts
+  evalPlutusScripts,
  )
 import Cardano.Ledger.Alonzo.Scripts (AlonzoScript)
 import Cardano.Ledger.Alonzo.Tx (AlonzoEraTx (..), IsValid (..))

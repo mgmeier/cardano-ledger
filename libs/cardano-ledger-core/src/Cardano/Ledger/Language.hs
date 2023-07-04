@@ -74,7 +74,7 @@ data Plutus = Plutus
   { plutusLanguage :: !Language
   , plutusScript :: !BinaryPlutus
   }
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
 
 -- | Already in Normal Form
 instance NFData Plutus where
@@ -84,7 +84,7 @@ instance NoThunks Plutus
 
 -- | Binary representation of a Plutus script.
 newtype BinaryPlutus = BinaryPlutus {unBinaryPlutus :: ShortByteString}
-  deriving stock (Eq, Generic)
+  deriving stock (Eq, Ord, Generic)
   deriving newtype (ToCBOR, FromCBOR, EncCBOR, DecCBOR, NFData, NoThunks)
 
 instance Show BinaryPlutus where

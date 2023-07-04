@@ -13,8 +13,7 @@
 
 module Test.Cardano.Ledger.Examples.AlonzoCollectInputs (tests) where
 
-import Cardano.Ledger.Alonzo.Language (Language (..))
-import Cardano.Ledger.Alonzo.PlutusScriptApi (CollectError (..), collectTwoPhaseScriptInputs)
+import Cardano.Ledger.Alonzo.PlutusScriptApi (CollectError (..), collectPlutusScripts)
 import Cardano.Ledger.Alonzo.Scripts (
   AlonzoScript (..),
   CostModel,
@@ -29,6 +28,7 @@ import Cardano.Ledger.Alonzo.TxInfo (TranslationError, VersionedTxInfo, txInfo, 
 import Cardano.Ledger.Alonzo.TxWits (RdmrPtr (..), Redeemers (..))
 import Cardano.Ledger.BaseTypes (natVersion)
 import Cardano.Ledger.Core hiding (TranslationError)
+import Cardano.Ledger.Language (Language (..), Plutus (..))
 import Cardano.Ledger.Pretty.Babbage ()
 import Cardano.Ledger.SafeHash (hashAnnotated)
 import Cardano.Ledger.Shelley.API (
@@ -40,7 +40,6 @@ import Cardano.Ledger.Val (inject)
 import Cardano.Slotting.EpochInfo (EpochInfo, fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochSize (..))
 import Cardano.Slotting.Time (SystemStart (..), mkSlotLength)
-import Data.ByteString.Short (ShortByteString)
 import Data.Either (fromRight)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -85,8 +84,7 @@ collectTwoPhaseScriptInputsOutputOrdering =
   collectInputs apf testEpochInfo testSystemStart (pp apf) (validatingTx apf) (initUTxO apf)
     @?= Right
       [
-        ( sbs
-        , lang
+        ( plutus
         , [datum, redeemer, context]
         , ExUnits 5000 5000
         , freeCostModelV1
@@ -94,9 +92,9 @@ collectTwoPhaseScriptInputsOutputOrdering =
       ]
   where
     apf = Alonzo Mock
-    (lang, sbs) = case always 3 apf of
+    plutus = case always 3 apf of
       TimelockScript _ -> error "always was not a Plutus script"
-      PlutusScript l s -> (l, s)
+      PlutusScript ps -> ps
     context =
       valContext
         ( fromRight (error "translation error") $
@@ -167,12 +165,10 @@ collectInputs ::
   PParams era ->
   Tx era ->
   UTxO era ->
-  Either
-    [CollectError era]
-    [(ShortByteString, Language, [Data era], ExUnits, CostModel)]
-collectInputs (Alonzo _) = collectTwoPhaseScriptInputs
-collectInputs (Babbage _) = collectTwoPhaseScriptInputs
-collectInputs (Conway _) = collectTwoPhaseScriptInputs
+  Either [CollectError era] [(Plutus, [Data era], ExUnits, CostModel)]
+collectInputs (Alonzo _) = collectPlutusScripts
+collectInputs (Babbage _) = collectPlutusScripts
+collectInputs (Conway _) = collectPlutusScripts
 collectInputs x = error ("collectInputs Not defined in era " ++ show x)
 
 getTxInfo ::
