@@ -12,6 +12,7 @@ module Test.Cardano.Ledger.Generic.Fields (
     ..,
     Inputs',
     Collateral',
+    GovernanceProcs',
     RefInputs',
     Outputs',
     Certs',
@@ -36,6 +37,7 @@ module Test.Cardano.Ledger.Generic.Fields (
   abstractTxBody,
   abstractTxOut,
   abstractWitnesses,
+  toStrictSeq,
 )
 where
 
@@ -147,6 +149,8 @@ pattern WppHash' :: [ScriptIntegrityHash (EraCrypto era)] -> TxBodyField era -- 
 pattern AdHash' :: [AuxiliaryDataHash (EraCrypto era)] -> TxBodyField era -- 0 or 1 element
 
 pattern Txnetworkid' :: [Network] -> TxBodyField era -- 0 or 1 element
+
+pattern GovernanceProcs' :: [GovernanceProcedure era] -> TxBodyField era
 
 -- ====================
 data WitnessesField era
@@ -519,6 +523,15 @@ pattern RefInputs' x <-
   (refview -> Just x)
   where
     RefInputs' x = RefInputs (toSet x)
+
+govview :: TxBodyField era -> Maybe [GovernanceProcedure era]
+govview (GovernanceProcs x) = Just (fromStrictSeq x)
+govview _ = Nothing
+
+pattern GovernanceProcs' x <-
+  (govview -> Just x)
+  where
+    GovernanceProcs' x = GovernanceProcs (toStrictSeq x)
 
 -- =============================
 -- Tx patterns

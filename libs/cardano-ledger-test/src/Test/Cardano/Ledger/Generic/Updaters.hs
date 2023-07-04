@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -25,6 +26,8 @@ import Cardano.Ledger.Babbage.TxBody as Babbage (
   BabbageTxOut (..),
   Datum (..),
  )
+import Cardano.Ledger.Conway.Core
+import Cardano.Ledger.Conway.Governance (GovernanceProcedure (..))
 import Cardano.Ledger.Shelley.Tx as Shelley (
   ShelleyTx (..),
  )
@@ -215,6 +218,11 @@ updateTxBody pf txBody dt =
       RefInputs refInputs -> txBody & referenceInputsTxBodyL .~ refInputs
       TotalCol totalCol -> txBody & totalCollateralTxBodyL .~ totalCol
       CollateralReturn collateralReturn -> txBody & collateralReturnTxBodyL .~ collateralReturn
+      GovernanceProcs' procs ->
+        let pp = [x | GovernanceProposalProcedure x <- procs]
+            vp = [x | GovernanceVotingProcedure x <- procs]
+         in (txBody & proposalProceduresTxBodyL .~ toStrictSeq pp)
+              & votingProceduresTxBodyL .~ toStrictSeq vp
       _ -> txBody
 {-# NOINLINE updateTxBody #-}
 
