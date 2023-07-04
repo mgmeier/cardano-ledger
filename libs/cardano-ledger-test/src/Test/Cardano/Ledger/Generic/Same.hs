@@ -41,12 +41,12 @@ import Cardano.Ledger.Shelley.LedgerState (
   CertState (..),
   DState (..),
   EpochState (..),
+  GState (..),
   LedgerState (..),
   NewEpochState (..),
   PState (..),
   StashedAVVMAddresses,
   UTxOState (..),
-  VState (..),
  )
 import Cardano.Ledger.Shelley.PParams (ProposedPPUpdates (..))
 import Cardano.Ledger.Shelley.Translation ()
@@ -121,7 +121,7 @@ instance Same era (CertState era) where
   same proof (CertState d1 p1 v1) (CertState d2 p2 v2) =
     extendLabel "DState " (same proof d1 d2)
       ++ extendLabel "PState " (same proof p1 p2)
-      ++ extendLabel "VState " (same proof v1 v2)
+      ++ extendLabel "GState " (same proof v1 v2)
 
 instance Same era (PState era) where
   same _proof (PState pp1 fpp1 ret1 d1) (PState pp2 fpp2 ret2 d2) =
@@ -139,8 +139,8 @@ instance Same era (DState era) where
     , ("InstantaneousRewards", eqByShow ir1 ir2)
     ]
 
-instance Same era (VState era) where
-  same _proof (VState dr1 cchk1) (VState dr2 cchk2) =
+instance Same era (GState era) where
+  same _proof (GState dr1 cchk1) (GState dr2 cchk2) =
     [ ("DReps", eqByShow dr1 dr2)
     , ("CC Hot Keys", eqByShow cchk1 cchk2)
     ]

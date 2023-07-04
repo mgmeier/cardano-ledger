@@ -35,7 +35,7 @@ import Cardano.Ledger.BaseTypes (
  )
 import Cardano.Ledger.Binary (EncCBORGroup)
 import Cardano.Ledger.Block (Block (..))
-import Cardano.Ledger.CertState (VState (..))
+import Cardano.Ledger.CertState (GState (..))
 import Cardano.Ledger.Chain (
   ChainPredicateFailure (..),
   chainChecks,
@@ -349,7 +349,7 @@ chainTransition =
         let NewEpochState e1 _ _ _ _ _ _ = nes
             NewEpochState e2 _ bcur es _ _pd _ = nes'
         let EpochState account _ ls _ pp' _ = es
-        let LedgerState _ (CertState VState {} PState {} DState {dsGenDelegs = genDelegs}) = ls
+        let LedgerState _ (CertState GState {} PState {} DState {dsGenDelegs = genDelegs}) = ls
         let ph = lastAppliedHash lab
             etaPH = prevHashToNonce ph
 

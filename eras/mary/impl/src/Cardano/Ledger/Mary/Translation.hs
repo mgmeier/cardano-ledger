@@ -82,8 +82,8 @@ instance Crypto c => TranslateEra (MaryEra c) EpochState where
 instance Crypto c => TranslateEra (MaryEra c) DState where
   translateEra _ DState {..} = pure DState {..}
 
-instance Crypto c => TranslateEra (MaryEra c) VState where
-  translateEra _ VState {..} = pure VState {..}
+instance Crypto c => TranslateEra (MaryEra c) GState where
+  translateEra _ GState {..} = pure GState {..}
 
 instance Crypto c => TranslateEra (MaryEra c) PState where
   translateEra _ PState {..} = pure PState {..}
@@ -94,7 +94,7 @@ instance Crypto c => TranslateEra (MaryEra c) CertState where
       CertState
         { certDState = translateEra' ctxt $ certDState ls
         , certPState = translateEra' ctxt $ certPState ls
-        , certVState = translateEra' ctxt $ certVState ls
+        , certGState = translateEra' ctxt $ certGState ls
         }
 
 instance Crypto c => TranslateEra (MaryEra c) LedgerState where

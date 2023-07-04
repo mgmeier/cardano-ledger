@@ -70,6 +70,7 @@ import Cardano.Ledger.Shelley.LedgerState (
   CertState (..),
   DState (..),
   EpochState (..),
+  GState (..),
   IncrementalStake (..),
   InstantaneousRewards (..),
   LedgerState (..),
@@ -77,7 +78,6 @@ import Cardano.Ledger.Shelley.LedgerState (
   PState (..),
   StashedAVVMAddresses,
   UTxOState (..),
-  VState (..),
   completeRupd,
   smartUTxOState,
  )
@@ -318,8 +318,8 @@ makeRewards mnes = Map.mapWithKey f credRewMap
 instance Extract (PState era) era where
   extract x = PState (mPoolParams x) (mFPoolParams x) (mRetiring x) Map.empty
 
-instance Extract (VState era) era where
-  extract _ = VState def def
+instance Extract (GState era) era where
+  extract _ = GState def def
 
 instance Extract (CertState era) era where
   extract x = CertState (extract x) (extract x) (extract x)

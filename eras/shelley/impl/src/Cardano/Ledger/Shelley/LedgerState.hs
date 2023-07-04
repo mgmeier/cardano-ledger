@@ -13,7 +13,7 @@ module Cardano.Ledger.Shelley.LedgerState (
   AccountState (..),
   CertState (..),
   DState (..),
-  VState (..),
+  GState (..),
   emptyDState,
   rewards,
   delegations,

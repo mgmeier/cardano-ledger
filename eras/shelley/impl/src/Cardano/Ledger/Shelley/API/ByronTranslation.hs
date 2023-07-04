@@ -167,7 +167,7 @@ translateToShelleyLedgerState transCtxt epochNo cvs =
             CertState
               { certDState = dState
               , certPState = def
-              , certVState = def
+              , certGState = def
               }
         }
 

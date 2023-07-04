@@ -36,8 +36,8 @@ import Cardano.Ledger.BaseTypes (
 import Cardano.Ledger.Coin (Coin (..))
 import Cardano.Ledger.Conway.Core
 import Cardano.Ledger.Conway.Governance (
+  ConwayGovState (..),
   ConwayGovernance (..),
-  ConwayTallyState (..),
   GovernanceActionState (..),
   RatifyState (..),
  )
@@ -49,11 +49,11 @@ import Cardano.Ledger.Shelley.LedgerState (
   CertState (..),
   DState (..),
   EpochState (..),
+  GState (..),
   LedgerState (..),
   NewEpochState (..),
   PState (..),
   UTxOState (..),
-  VState (..),
  )
 import Cardano.Ledger.Shelley.TxBody (
   ShelleyTxOut (..),
@@ -413,7 +413,7 @@ instance TotalAda (DState era) where
 instance TotalAda (PState era) where
   totalAda pstate = Fold.fold (psDeposits pstate)
 
-instance TotalAda (VState era) where
+instance TotalAda (GState era) where
   totalAda _ = mempty
 
 instance TotalAda (CertState era) where
@@ -422,9 +422,9 @@ instance TotalAda (CertState era) where
 instance TotalAda (ShelleyPPUPState era) where
   totalAda _ = mempty
 
-instance TotalAda (ConwayTallyState era) where
+instance TotalAda (ConwayGovState era) where
   -- TODO Might need a review once the specification is done
-  totalAda (ConwayTallyState x) = mconcat $ gasDeposit <$> Map.elems x
+  totalAda (ConwayGovState x) = mconcat $ gasDeposit <$> Map.elems x
 
 governanceStateTotalAda :: forall era. Reflect era => GovernanceState era -> Coin
 governanceStateTotalAda = case reify @era of

@@ -26,16 +26,16 @@ import Cardano.Ledger.Binary.Coders
 import Cardano.Ledger.Conway.Core
 import Cardano.Ledger.Conway.Era (ConwayCERT, ConwayDELEG, ConwayPOOL, ConwayVDEL)
 import Cardano.Ledger.Conway.Rules.Deleg (ConwayDelegPredFailure (..))
-import Cardano.Ledger.Conway.Rules.VDel (ConwayVDelPredFailure)
+import Cardano.Ledger.Conway.Rules.GovCert (ConwayGovCertPredFailure)
 import Cardano.Ledger.Conway.TxCert (ConwayCommitteeCert, ConwayDelegCert, ConwayTxCert (..))
 import Cardano.Ledger.Shelley.API (
   CertState (..),
   DState,
   DelegEnv (DelegEnv),
   DelplEnv (DelplEnv),
+  GState,
   PState,
   PoolEnv (PoolEnv),
-  VState,
  )
 import Cardano.Ledger.Shelley.Rules (ShelleyPoolPredFailure)
 import Control.DeepSeq (NFData)
@@ -56,7 +56,7 @@ import NoThunks.Class (NoThunks)
 data ConwayCertPredFailure era
   = DelegFailure (PredicateFailure (EraRule "DELEG" era))
   | PoolFailure (PredicateFailure (EraRule "POOL" era))
-  | VDelFailure (PredicateFailure (EraRule "VDEL" era))
+  | GovCertFailure (PredicateFailure (EraRule "VDEL" era))
   deriving (Generic)
 
 deriving stock instance
@@ -90,14 +90,14 @@ instance
 data ConwayCertEvent era
   = DelegEvent (Event (ConwayDELEG era))
   | PoolEvent (Event (ConwayPOOL era))
-  | VDelEvent (Event (ConwayVDEL era))
+  | GovCertEvent (Event (ConwayVDEL era))
 
 instance
   forall era.
   ( Era era
   , State (EraRule "DELEG" era) ~ DState era
   , State (EraRule "POOL" era) ~ PState era
-  , State (EraRule "VDEL" era) ~ VState era
+  , State (EraRule "VDEL" era) ~ GState era
   , Environment (EraRule "DELEG" era) ~ DelegEnv era
   , Environment (EraRule "POOL" era) ~ PoolEnv era
   , Environment (EraRule "VDEL" era) ~ PParams era
@@ -124,7 +124,7 @@ certTransition ::
   forall era.
   ( State (EraRule "DELEG" era) ~ DState era
   , State (EraRule "POOL" era) ~ PState era
-  , State (EraRule "VDEL" era) ~ VState era
+  , State (EraRule "VDEL" era) ~ GState era
   , Environment (EraRule "DELEG" era) ~ DelegEnv era
   , Environment (EraRule "POOL" era) ~ PoolEnv era
   , Environment (EraRule "VDEL" era) ~ PParams era
@@ -139,7 +139,7 @@ certTransition ::
   TransitionRule (ConwayCERT era)
 certTransition = do
   TRC (DelplEnv slot ptr pp acnt, cState, c) <- judgmentContext
-  let CertState {certDState, certPState, certVState} = cState
+  let CertState {certDState, certPState, certGState} = cState
   case c of
     ConwayTxCertDeleg delegCert -> do
       newDState <- trans @(EraRule "DELEG" era) $ TRC (DelegEnv slot ptr acnt pp, certDState, delegCert)
@@ -148,8 +148,8 @@ certTransition = do
       newPState <- trans @(EraRule "POOL" era) $ TRC (PoolEnv slot pp, certPState, poolCert)
       pure $ cState {certPState = newPState}
     ConwayTxCertCommittee vDelCert -> do
-      newVState <- trans @(EraRule "VDEL" era) $ TRC (pp, certVState, vDelCert)
-      pure $ cState {certVState = newVState}
+      newGState <- trans @(EraRule "VDEL" era) $ TRC (pp, certGState, vDelCert)
+      pure $ cState {certGState = newGState}
 
 instance
   ( Era era
@@ -176,12 +176,12 @@ instance
 instance
   ( Era era
   , STS (ConwayVDEL era)
-  , PredicateFailure (EraRule "VDEL" era) ~ ConwayVDelPredFailure era
+  , PredicateFailure (EraRule "VDEL" era) ~ ConwayGovCertPredFailure era
   ) =>
   Embed (ConwayVDEL era) (ConwayCERT era)
   where
-  wrapFailed = VDelFailure
-  wrapEvent = VDelEvent
+  wrapFailed = GovCertFailure
+  wrapEvent = GovCertEvent
 
 instance
   ( Typeable era
@@ -195,7 +195,7 @@ instance
     encode . \case
       DelegFailure x -> Sum (DelegFailure @era) 1 !> To x
       PoolFailure x -> Sum (PoolFailure @era) 2 !> To x
-      VDelFailure x -> Sum (VDelFailure @era) 3 !> To x
+      GovCertFailure x -> Sum (GovCertFailure @era) 3 !> To x
 
 instance
   ( Typeable era
@@ -209,5 +209,5 @@ instance
     decode $ Summands "ConwayCertPredFailure" $ \case
       1 -> SumD DelegFailure <! From
       2 -> SumD PoolFailure <! From
-      3 -> SumD VDelFailure <! From
+      3 -> SumD GovCertFailure <! From
       n -> Invalid n

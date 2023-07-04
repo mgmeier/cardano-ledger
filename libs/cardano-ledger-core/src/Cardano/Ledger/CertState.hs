@@ -14,7 +14,7 @@ module Cardano.Ledger.CertState (
   CertState (..),
   DState (..),
   PState (..),
-  VState (..),
+  GState (..),
   InstantaneousRewards (..),
   FutureGenDeleg (..),
   lookupDepositDState,
@@ -253,7 +253,7 @@ toPStatePair PState {..} =
   , "deposits" .= psDeposits
   ]
 
-data VState era = VState
+data GState era = GState
   { vsDReps :: !(Set (Credential 'Voting (EraCrypto era)))
   , vsCommitteeHotKeys ::
       !( Map
@@ -263,31 +263,31 @@ data VState era = VState
   }
   deriving (Show, Eq, Generic)
 
-instance Default (VState era) where
-  def = VState def def
+instance Default (GState era) where
+  def = GState def def
 
-instance NoThunks (VState era)
+instance NoThunks (GState era)
 
-instance NFData (VState era)
+instance NFData (GState era)
 
-instance Era era => DecCBOR (VState era) where
+instance Era era => DecCBOR (GState era) where
   decCBOR =
     decode $
-      RecD VState
+      RecD GState
         <! From
         <! From
 
-instance Era era => EncCBOR (VState era) where
-  encCBOR VState {..} =
+instance Era era => EncCBOR (GState era) where
+  encCBOR GState {..} =
     encode $
-      Rec (VState @era)
+      Rec (GState @era)
         !> To vsDReps
         !> To vsCommitteeHotKeys
 
 -- | The state associated with the DELPL rule, which combines the DELEG rule
 -- and the POOL rule.
 data CertState era = CertState
-  { certVState :: !(VState era)
+  { certGState :: !(GState era)
   , certPState :: !(PState era)
   , certDState :: !(DState era)
   }
@@ -312,19 +312,19 @@ instance Crypto c => DecShareCBOR (InstantaneousRewards c) where
       pure $ InstantaneousRewards irR irT dR dT
 
 instance Era era => EncCBOR (CertState era) where
-  encCBOR CertState {certPState, certDState, certVState} =
+  encCBOR CertState {certPState, certDState, certGState} =
     encodeListLen 3
-      <> encCBOR certVState
+      <> encCBOR certGState
       <> encCBOR certPState
       <> encCBOR certDState
 
 instance Era era => DecShareCBOR (CertState era) where
   type Share (CertState era) = (Interns (Credential 'Staking (EraCrypto era)), Interns (KeyHash 'StakePool (EraCrypto era)))
   decSharePlusCBOR = decodeRecordNamedT "CertState" (const 3) $ do
-    certVState <- lift decCBOR -- TODO: add sharing of DRep credentials
+    certGState <- lift decCBOR -- TODO: add sharing of DRep credentials
     certPState <- decSharePlusLensCBOR _2
     certDState <- decSharePlusCBOR
-    pure CertState {certPState, certDState, certVState}
+    pure CertState {certPState, certDState, certGState}
 
 instance Default (CertState era) where
   def = CertState def def def
@@ -397,7 +397,7 @@ refundPoolDeposit keyhash pstate = (coin, pstate {psDeposits = newpool})
 --   this should be the same as the utxosDeposited field of the UTxOState. Note that
 --   this does not depend upon the current values of the Key and Pool deposits of the PParams.
 obligationCertState :: CertState era -> Coin
-obligationCertState (CertState VState {} PState {psDeposits = stakePools} DState {dsUnified = umap}) =
+obligationCertState (CertState GState {} PState {psDeposits = stakePools} DState {dsUnified = umap}) =
   UM.fromCompact (UM.sumDepositUView (RewDepUView umap)) <> foldl' (<>) (Coin 0) stakePools
 
 -- =====================================================
@@ -408,7 +408,7 @@ instance ToExpr (PState era)
 
 instance ToExpr (DState era)
 
-instance ToExpr (VState era)
+instance ToExpr (GState era)
 
 instance ToExpr (FutureGenDeleg c)
 

@@ -16,7 +16,7 @@ import Cardano.Ledger.Alonzo.PParams ()
 import Cardano.Ledger.Alonzo.Tx (AlonzoTx (..), IsValid (..))
 import Cardano.Ledger.Alonzo.TxBody (AlonzoTxOut (..))
 import Cardano.Ledger.Binary (DecoderError)
-import Cardano.Ledger.CertState (PState (..), VState (..))
+import Cardano.Ledger.CertState (GState (..), PState (..))
 import Cardano.Ledger.Core (upgradePParams, upgradePParamsUpdate)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Crypto (Crypto)
@@ -108,8 +108,8 @@ instance Crypto c => TranslateEra (AlonzoEra c) EpochState where
 instance Crypto c => TranslateEra (AlonzoEra c) DState where
   translateEra _ DState {..} = pure DState {..}
 
-instance Crypto c => TranslateEra (AlonzoEra c) VState where
-  translateEra _ VState {..} = pure VState {..}
+instance Crypto c => TranslateEra (AlonzoEra c) GState where
+  translateEra _ GState {..} = pure GState {..}
 
 instance Crypto c => TranslateEra (AlonzoEra c) PState where
   translateEra _ PState {..} = pure PState {..}
@@ -120,7 +120,7 @@ instance Crypto c => TranslateEra (AlonzoEra c) CertState where
       CertState
         { certDState = translateEra' ctxt $ certDState ls
         , certPState = translateEra' ctxt $ certPState ls
-        , certVState = translateEra' ctxt $ certVState ls
+        , certGState = translateEra' ctxt $ certGState ls
         }
 
 instance Crypto c => TranslateEra (AlonzoEra c) API.LedgerState where

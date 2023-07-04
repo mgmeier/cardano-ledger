@@ -666,8 +666,8 @@ instance Era era => Arbitrary (DState era) where
 instance Era era => Arbitrary (PState era) where
   arbitrary = PState <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
 
-instance Era era => Arbitrary (VState era) where
-  arbitrary = VState <$> arbitrary <*> arbitrary
+instance Era era => Arbitrary (GState era) where
+  arbitrary = GState <$> arbitrary <*> arbitrary
 
 instance Crypto c => Arbitrary (InstantaneousRewards c) where
   arbitrary = InstantaneousRewards <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary

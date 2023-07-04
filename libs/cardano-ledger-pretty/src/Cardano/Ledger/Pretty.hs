@@ -57,7 +57,7 @@ import Cardano.Ledger.BaseTypes (
   txIxToInt,
  )
 import Cardano.Ledger.Block (Block (..))
-import Cardano.Ledger.CertState (VState (..))
+import Cardano.Ledger.CertState (GState (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin (..))
 import Cardano.Ledger.Compactible (Compactible (..))
 import Cardano.Ledger.Core
@@ -1677,10 +1677,10 @@ instance PrettyA (GenDelegPair c) where
 instance PrettyA (GenDelegs c) where
   prettyA = ppGenDelegs
 
-instance PrettyA (VState era) where
-  prettyA (VState vsDReps vsCommitteeHotKeys) =
+instance PrettyA (GState era) where
+  prettyA (GState vsDReps vsCommitteeHotKeys) =
     ppRecord
-      "VState"
+      "GState"
       [ ("DReps", prettyA vsDReps)
       , ("CC Hot Keys", prettyA vsCommitteeHotKeys)
       ]

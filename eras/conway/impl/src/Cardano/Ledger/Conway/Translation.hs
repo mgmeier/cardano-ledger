@@ -31,11 +31,11 @@ import Cardano.Ledger.Shelley.API (
   CertState (..),
   DState (..),
   EpochState (..),
+  GState (..),
   NewEpochState (..),
   PState (..),
   StrictMaybe (..),
   UTxOState (..),
-  VState (..),
  )
 import qualified Cardano.Ledger.Shelley.API as API
 import Data.Coerce
@@ -115,8 +115,8 @@ instance Crypto c => TranslateEra (ConwayEra c) EpochState where
 instance Crypto c => TranslateEra (ConwayEra c) DState where
   translateEra _ DState {..} = pure DState {..}
 
-instance Crypto c => TranslateEra (ConwayEra c) VState where
-  translateEra _ VState {..} = pure VState {..}
+instance Crypto c => TranslateEra (ConwayEra c) GState where
+  translateEra _ GState {..} = pure GState {..}
 
 instance Crypto c => TranslateEra (ConwayEra c) PState where
   translateEra _ PState {..} = pure PState {..}
@@ -127,7 +127,7 @@ instance Crypto c => TranslateEra (ConwayEra c) CertState where
       CertState
         { certDState = translateEra' ctxt $ certDState ls
         , certPState = translateEra' ctxt $ certPState ls
-        , certVState = translateEra' ctxt $ certVState ls
+        , certGState = translateEra' ctxt $ certGState ls
         }
 
 instance Crypto c => TranslateEra (ConwayEra c) API.LedgerState where

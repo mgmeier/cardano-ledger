@@ -105,14 +105,14 @@ psDepositsL :: Lens' (PState era) (Map (KeyHash 'StakePool (EraCrypto era)) Coin
 psDepositsL = lens psDeposits (\ds u -> ds {psDeposits = u})
 
 -- ===================================
--- VState
+-- GState
 
-vsDRepsL :: Lens' (VState era) (Set (Credential 'Voting (EraCrypto era)))
+vsDRepsL :: Lens' (GState era) (Set (Credential 'Voting (EraCrypto era)))
 vsDRepsL = lens vsDReps (\vs u -> vs {vsDReps = u})
 
 vsCommitteeHotKeysL ::
   Lens'
-    (VState era)
+    (GState era)
     (Map (KeyHash 'CommitteeColdKey (EraCrypto era)) (Maybe (KeyHash 'CommitteeHotKey (EraCrypto era))))
 vsCommitteeHotKeysL = lens vsCommitteeHotKeys (\vs u -> vs {vsCommitteeHotKeys = u})
 
@@ -125,8 +125,8 @@ certDStateL = lens certDState (\ds u -> ds {certDState = u})
 certPStateL :: Lens' (CertState era) (PState era)
 certPStateL = lens certPState (\ds u -> ds {certPState = u})
 
-certVStateL :: Lens' (CertState era) (VState era)
-certVStateL = lens certVState (\ds u -> ds {certVState = u})
+certGStateL :: Lens' (CertState era) (GState era)
+certGStateL = lens certGState (\ds u -> ds {certGState = u})
 
 -- ========================================
 -- UTxOState

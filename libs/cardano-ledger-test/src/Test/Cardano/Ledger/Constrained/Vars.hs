@@ -9,7 +9,7 @@
 module Test.Cardano.Ledger.Constrained.Vars where
 
 import Cardano.Ledger.BaseTypes (BlocksMade (..), EpochNo, ProtVer (..), StrictMaybe (..))
-import Cardano.Ledger.CertState (CertState (..), DState (..), FutureGenDeleg (..), PState (..), VState (..))
+import Cardano.Ledger.CertState (CertState (..), DState (..), FutureGenDeleg (..), GState (..), PState (..))
 import qualified Cardano.Ledger.CertState as DPS (InstantaneousRewards (..))
 import Cardano.Ledger.Coin (Coin (..), DeltaCoin)
 import Cardano.Ledger.Core (
@@ -69,7 +69,7 @@ import Test.Cardano.Ledger.Constrained.Lenses
 import Test.Cardano.Ledger.Constrained.TypeRep (Rep (..), testEql, (:~:) (Refl))
 import Test.Cardano.Ledger.Generic.Proof (Evidence (..), Proof (..))
 
-import Cardano.Ledger.Conway.Governance (ConwayTallyState (..))
+import Cardano.Ledger.Conway.Governance (ConwayGovState (..))
 import Cardano.Ledger.Shelley.Governance (ShelleyPPUPState (..))
 import qualified Cardano.Ledger.Shelley.Governance as Core (GovernanceState (..))
 import qualified Cardano.Ledger.Shelley.PParams as Core (ProposedPPUpdates (..))
@@ -224,13 +224,13 @@ dreps :: Term era (Set (Credential 'Voting (EraCrypto era)))
 dreps = Var $ V "dreps" (SetR VCredR) (Yes NewEpochStateR drepsL)
 
 drepsL :: NELens era (Set (Credential 'Voting (EraCrypto era)))
-drepsL = nesEsL . esLStateL . lsCertStateL . certVStateL . vsDRepsL
+drepsL = nesEsL . esLStateL . lsCertStateL . certGStateL . vsDRepsL
 
 ccHotKeys :: Term era (Map (KeyHash 'CommitteeColdKey (EraCrypto era)) (Maybe (KeyHash 'CommitteeHotKey (EraCrypto era))))
 ccHotKeys = Var $ V "dreps" (MapR CommColdHashR (MaybeR CommHotHashR)) (Yes NewEpochStateR ccHotKeysL)
 
 ccHotKeysL :: NELens era (Map (KeyHash 'CommitteeColdKey (EraCrypto era)) (Maybe (KeyHash 'CommitteeHotKey (EraCrypto era))))
-ccHotKeysL = nesEsL . esLStateL . lsCertStateL . certVStateL . vsCommitteeHotKeysL
+ccHotKeysL = nesEsL . esLStateL . lsCertStateL . certGStateL . vsCommitteeHotKeysL
 
 -- UTxOState
 
@@ -649,9 +649,9 @@ utxoStateT p = Constr "UTxOState" (utxofun p) ^$ (pparams p) ^$ utxo p ^$ deposi
 dpstateT :: Target era (CertState era)
 dpstateT = Constr "CertState" CertState :$ vstateT :$ pstateT :$ dstateT
 
--- | Target for VState
-vstateT :: Target era (VState era)
-vstateT = Constr "VState" VState ^$ dreps ^$ ccHotKeys
+-- | Target for GState
+vstateT :: Target era (GState era)
+vstateT = Constr "GState" GState ^$ dreps ^$ ccHotKeys
 
 -- | Target for PState
 pstateT :: Target era (PState era)

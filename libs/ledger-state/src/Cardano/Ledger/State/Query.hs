@@ -512,7 +512,7 @@ getLedgerState utxo LedgerState {..} dstate = do
           Shelley.CertState
             { Shelley.certDState = dstate
             , Shelley.certPState = ledgerStatePstateBin
-            , Shelley.certVState = def
+            , Shelley.certGState = def
             }
       }
 

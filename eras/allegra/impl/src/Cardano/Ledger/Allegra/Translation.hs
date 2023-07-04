@@ -21,6 +21,7 @@ import Cardano.Ledger.Shelley.API (
   CertState (..),
   DState (..),
   EpochState (..),
+  GState (..),
   LedgerState (..),
   NewEpochState (..),
   PState (..),
@@ -31,7 +32,6 @@ import Cardano.Ledger.Shelley.API (
   UTxO (..),
   UTxOState (..),
   Update,
-  VState (..),
  )
 import qualified Cardano.Ledger.Shelley.LedgerState as LS (
   returnRedeemAddrsToReserves,
@@ -126,8 +126,8 @@ instance Crypto c => TranslateEra (AllegraEra c) UTxOState where
 instance Crypto c => TranslateEra (AllegraEra c) DState where
   translateEra _ DState {..} = pure DState {..}
 
-instance Crypto c => TranslateEra (AllegraEra c) VState where
-  translateEra _ VState {..} = pure VState {..}
+instance Crypto c => TranslateEra (AllegraEra c) GState where
+  translateEra _ GState {..} = pure GState {..}
 
 instance Crypto c => TranslateEra (AllegraEra c) PState where
   translateEra _ PState {..} = pure PState {..}
@@ -138,7 +138,7 @@ instance Crypto c => TranslateEra (AllegraEra c) CertState where
       CertState
         { certDState = translateEra' ctxt $ certDState ls
         , certPState = translateEra' ctxt $ certPState ls
-        , certVState = translateEra' ctxt $ certVState ls
+        , certGState = translateEra' ctxt $ certGState ls
         }
 
 instance Crypto c => TranslateEra (AllegraEra c) LedgerState where

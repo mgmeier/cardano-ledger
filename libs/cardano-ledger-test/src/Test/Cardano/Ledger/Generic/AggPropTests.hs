@@ -130,7 +130,7 @@ depositInvariant ::
   Property
 depositInvariant SourceSignalTarget {source = mockChainSt} =
   let LedgerState {lsUTxOState = utxost, lsCertState = CertState _vstate pstate dstate} = (esLState . nesEs . mcsNes) mockChainSt
-      -- TODO handle VState
+      -- TODO handle GState
       allDeposits = utxosDeposited utxost
       sumCoin m = Map.foldl' (<+>) (Coin 0) m
       keyDeposits = fromCompact $ sumDepositUView (RewDepUView (dsUnified dstate))
@@ -150,7 +150,7 @@ rewardDepositDomainInvariant ::
   Property
 rewardDepositDomainInvariant SourceSignalTarget {source = mockChainSt} =
   let LedgerState {lsCertState = CertState _ _ dstate} = (esLState . nesEs . mcsNes) mockChainSt
-      -- TODO VState
+      -- TODO GState
       rewardDomain = domain (RewDepUView (dsUnified dstate))
       depositDomain = Map.keysSet (depositMap (dsUnified dstate))
    in counterexample
