@@ -119,8 +119,8 @@ import Control.Monad.Trans.State.Strict (StateT (..))
 import Data.Aeson (ToJSON (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import Data.Foldable (Foldable (..))
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Map.Lazy (Map)
+import qualified Data.Map.Lazy as Map
 import Data.MapExtras (intersectDomPLeft)
 import Data.Maybe as Maybe (fromMaybe, isNothing, mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
