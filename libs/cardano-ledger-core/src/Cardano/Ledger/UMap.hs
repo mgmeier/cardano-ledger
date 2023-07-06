@@ -114,7 +114,7 @@ import Cardano.Ledger.Credential (Credential (..), Ptr)
 import Cardano.Ledger.Crypto (Crypto)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import Cardano.Ledger.TreeDiff (ToExpr)
-import Control.DeepSeq (NFData (..))
+import Control.DeepSeq (NFData (..), force)
 import Control.Monad.Trans.State.Strict (StateT (..))
 import Data.Aeson (ToJSON (..), object, (.=))
 import qualified Data.Aeson as Aeson
@@ -991,6 +991,7 @@ findWithDefault def k = fromMaybe def . lookup k
 size :: UView c k v -> Int
 size = \case
   PtrUView UMap {umPtrs} -> Map.size umPtrs
+  SPoolUView (force -> !x)  -> foldl' (\count _v -> count + 1) 0 (SPoolUView x)
   x -> foldl' (\count _v -> count + 1) 0 x
 
 -- | Create a UMap from 4 separate maps. NOTE: For use in tests only.
